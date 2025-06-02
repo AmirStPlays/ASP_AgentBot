@@ -1,0 +1,7 @@
+pyTelegramBotAPI
+google-genai
+google-generativeai==0.5.2
+Pillow==10.3.0
+pyTelegramBotAPI==4.15.5
+md2tgmd==0.1.6
+aiohttp==3.9.5
