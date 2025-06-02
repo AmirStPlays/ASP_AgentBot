@@ -6,8 +6,7 @@ import telebot
 from telebot.async_telebot import AsyncTeleBot
 import handlers
 from config import conf
-from keep_alive import keep_alive
-keep_alive()
+
 
 # Init args
 parser = argparse.ArgumentParser()
