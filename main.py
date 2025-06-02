@@ -12,7 +12,7 @@ keep_alive()
 # Init args
 parser = argparse.ArgumentParser()
 # توکن تلگرام شما
-TG_TOKEN_PROVIDED = "8030885133:AAFEDd8BiJgRC7v7Mkze8DIK9bRbRKYfRDs" # Placeholder, use environment variables or secure config
+TG_TOKEN_PROVIDED = "8048656293:AAHlZUYeR0Iv4rtZ0cAPvWq6vwBgZmq8XUE" # Placeholder, use environment variables or secure config
 
 
 class Options:
