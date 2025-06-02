@@ -19,7 +19,6 @@ TG_TOKEN_PROVIDED = "8048656293:AAHlZUYeR0Iv4rtZ0cAPvWq6vwBgZmq8XUE" # Placehold
 class Options:
     def __init__(self, tg_token, google_gemini_key):
         self.tg_token = tg_token
-        self.GOOGLE_GEMINI_KEY = google_gemini_key
 
 options = Options(TG_TOKEN_PROVIDED)
 
