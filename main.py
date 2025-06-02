@@ -21,7 +21,7 @@ class Options:
         self.tg_token = tg_token
         self.GOOGLE_GEMINI_KEY = google_gemini_key
 
-options = Options(TG_TOKEN_PROVIDED, GEMINI_API_KEY_PROVIDED)
+options = Options(TG_TOKEN_PROVIDED)
 
 
 
