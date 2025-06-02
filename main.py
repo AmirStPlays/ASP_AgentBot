@@ -11,8 +11,8 @@ from config import conf # generation_config, safety_settings اگر در این�
 # Init args
 parser = argparse.ArgumentParser()
 # مقادیر توکن و کلید API شما که ارائه دادید
-TG_TOKEN_PROVIDED = "8030885133:AAFEDd8BiJgRC7v7Mkze8DIK9bRbRKYfRDs" # Placeholder, use environment variables or secure config
-GEMINI_API_KEY_PROVIDED = "AIzaSyAc2PYevmpUo_3PW5PMJpu491eg9EaqWqY" # Placeholder, use environment variables or secure config
+TG_TOKEN_PROVIDED = "8048656293:AAHlZUYeR0Iv4rtZ0cAPvWq6vwBgZmq8XUE" # Placeholder, use environment variables or secure config
+
 
 
 
