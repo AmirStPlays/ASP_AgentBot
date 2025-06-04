@@ -1,7 +1,7 @@
 import io
 import time
 import traceback
-import sys
+import random
 from PIL import Image
 from telebot.types import Message
 from md2tgmd import escape
@@ -29,15 +29,22 @@ search_tool = {'google_search': {}}
 # Ensure API key is handled securely, e.g., via environment variables or a secure config management system
 # For demonstration, using the placeholder directly from the prompt.
 # It's highly recommended to move this to a more secure location.
-GEMINI_API_KEY = "AIzaSyAc2PYevmpUo_3PW5PMJpu491eg9EaqWqY" 
-if not GEMINI_API_KEY:
-    print("Error: Gemini API key not found. Please set it.")
-    sys.exit(1)
+GEMINI_API_KEYS = [
+    "AIzaSyAc2PYevmpUo_3PW5PMJpu491eg9EaqWqY",
+    "AIzaSyCrSk31t3oLsK4uiDcZwo20cDGkxa8IuVg",
+    "AIzaSyAE6JIR_tjXSWbXRTWvd1POKIOMkTzf5O8",
+    "AIzaSyCf5kmryeqRICx0zZLhU6o40O9cbQCCjfQ"
+]
+
+def get_random_client():
+    api_key = random.choice(GEMINI_API_KEYS)
+    return genai.Client(api_key=api_key)
     
-client = genai.Client(api_key=GEMINI_API_KEY)
+
 
 
 async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
+    client = get_random_client()
     sent_message = None
     try:
         sent_message = await bot.reply_to(message, before_generate_info) # Using consistent message
@@ -158,6 +165,7 @@ async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
 
 async def gemini_edit(bot: TeleBot, message: Message, m: str, photo_file: bytes):
     image = Image.open(io.BytesIO(photo_file))
+    client = get_random_client()
     sent_progress_message = None
     try:
         # It's good practice to notify the user that processing has started,
@@ -217,6 +225,7 @@ async def gemini_draw(bot:TeleBot, message:Message, m:str):
     # If model_3 for image generation is stateless per call for drawing, this dict might not be strictly necessary for history,
     # but can be kept for consistency or future models that might benefit from it.
     chat_dict = gemini_draw_dict 
+    client = get_random_client()
     user_id_str = str(message.from_user.id)
 
     if user_id_str not in chat_dict:
