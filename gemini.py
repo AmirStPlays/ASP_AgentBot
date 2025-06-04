@@ -48,11 +48,17 @@ def get_random_client():
     api_key = random.choice(GEMINI_API_KEYS)
     return genai.Client(api_key=api_key)
 
+# Helper to ensure model name has 'models/' prefix
+def ensure_model_prefix(model_name):
+    if model_name and not model_name.startswith('models/'):
+        return f'models/{model_name}'
+    return model_name
+
+
 async def save_user_chats():
     async with _save_lock:
         data_to_save = {}
         for user_id, chat_obj in user_chats.items():
-            # Check if chat_obj has the 'model' attribute and 'history'
             if not hasattr(chat_obj, 'model') or not hasattr(chat_obj.model, 'name') or not hasattr(chat_obj, 'history'):
                 print(f"Skipping user {user_id} in save_user_chats: chat object incomplete (missing model.name or history).")
                 continue
@@ -78,7 +84,7 @@ async def save_user_chats():
                     serializable_history.append({'role': content_item.role, 'parts': serializable_parts})
 
             data_to_save[user_id] = {
-                'model_name': chat_obj.model.name, # Corrected: Use chat_obj.model.name
+                'model_name': chat_obj.model.name, 
                 'history': serializable_history
             }
         try:
@@ -125,19 +131,19 @@ async def load_user_chats_async():
             model_name_to_load = chat_data.get('model_name')
             if model_name_to_load: 
                 try:
-                    # Get model instance first
-                    model_instance = client.aio.models.get(model_name_to_load)
-                    # Start chat with safety settings
+                    # Ensure model name has prefix when getting the model instance
+                    full_model_name = ensure_model_prefix(model_name_to_load)
+                    model_instance = client.aio.models.get(full_model_name) # <-- Corrected here
+                    
                     chat_session = model_instance.start_chat(
                         history=rehydrated_history if rehydrated_history else None,
-                        safety_settings=global_safety_settings_list, # Apply safety settings
+                        safety_settings=global_safety_settings_list,
                         tools=[search_tool] 
-                        # generation_config can be passed here if other parameters like temperature are needed
                     )
                     _loaded_chats[user_id] = chat_session
                 except Exception as e_create_chat:
                     print(f"Error re-creating chat for user {user_id} with model {model_name_to_load}: {e_create_chat}")
-                    traceback.print_exc() # Print traceback for debugging
+                    traceback.print_exc()
             else:
                  print(f"Skipping chat for user {user_id} due to missing model_name.")
 
@@ -163,22 +169,23 @@ async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
         chat = user_chats.get(user_id_str)
         new_chat_created_or_model_switched = False
 
-        # Corrected: Check chat.model.name
-        if not chat or not hasattr(chat, 'model') or chat.model.name != model_type:
-            if chat and hasattr(chat, 'model') and chat.model.name != model_type:
-                print(f"Model type changed for user {user_id_str} from {chat.model.name} to {model_type}. Creating new chat session.")
+        # Corrected: Check chat.model.name and ensure model_type has prefix for comparison
+        full_model_type = ensure_model_prefix(model_type)
+        if not chat or not hasattr(chat, 'model') or chat.model.name != full_model_type:
+            if chat and hasattr(chat, 'model') and chat.model.name != full_model_type:
+                print(f"Model type changed for user {user_id_str} from {chat.model.name} to {full_model_type}. Creating new chat session.")
             elif not chat:
-                print(f"No existing chat session for user {user_id_str}. Creating new one for model {model_type}.")
-            else: # Should not happen if chat exists but no model attribute, indicates prior issue
-                print(f"Existing chat for user {user_id_str} is malformed. Recreating for model {model_type}.")
+                print(f"No existing chat session for user {user_id_str}. Creating new one for model {full_model_type}.")
+            else: 
+                print(f"Existing chat for user {user_id_str} is malformed. Recreating for model {full_model_type}.")
 
 
             # Get model instance first
-            model_instance = client.aio.models.get(model_type)
+            model_instance = client.aio.models.get(full_model_type) # <-- Use full model type here
             # Start chat with safety settings
             chat = model_instance.start_chat(
-                history=[], # New chat starts with empty history here, system prompt added next
-                safety_settings=global_safety_settings_list, # Apply safety settings
+                history=[], 
+                safety_settings=global_safety_settings_list, 
                 tools=[search_tool]
             )
             new_chat_created_or_model_switched = True
@@ -193,8 +200,6 @@ async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
                     تاریخ به میلادی: {date}  /// زمان: {timenow}
                     این اطلاعات رو داشته باش تا درصورتی که کاربر ازت پرسیدشون جواب بدی."""
                     full_prompt_with_time = default_system_prompt + "\n\n" + time_prompt
-                    # The response to this initial system message is usually not shown to user
-                    # but it primes the model and becomes part of chat.history
                     await chat.send_message(full_prompt_with_time)
                 except Exception as e_default_prompt:
                     print(f"Warning: Could not send default system prompt for user {user_id_str}: {e_default_prompt}")
@@ -215,10 +220,10 @@ async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
             if hasattr(chunk, 'text') and chunk.text:
                 full_response += chunk.text
                 current_time = time.time()
-                if current_time - last_update >= update_interval and full_response.strip(): # Ensure there's content before editing
+                if current_time - last_update >= update_interval and full_response.strip(): 
                     try:
                         await bot.edit_message_text(
-                            escape(full_response + "...") if len(full_response) < 4000 else escape(full_response[:4000] + "..."), # Typing indicator
+                            escape(full_response + "...") if len(full_response) < 4000 else escape(full_response[:4000] + "..."), 
                             chat_id=sent_message.chat.id,
                             message_id=sent_message.message_id,
                             parse_mode="MarkdownV2"
@@ -238,7 +243,7 @@ async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
                             print(f"Error updating message: {e}")
                     last_update = current_time
         
-        if not full_response.strip() and sent_message: # If model returned empty after stream
+        if not full_response.strip() and sent_message: 
              print(f"Empty response from model for user {user_id_str}, prompt: {m[:50]}")
              try:
                 await bot.edit_message_text(
@@ -248,10 +253,9 @@ async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
                 )
              except Exception as e_empty_edit:
                 print(f"Error editing message for empty model response: {e_empty_edit}")
-             return # Exit if no response from model
+             return 
 
 
-        # Final update without the typing indicator
         try:
             if sent_message and full_response.strip():
                 await bot.edit_message_text(
@@ -268,19 +272,19 @@ async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
                         chat_id=sent_message.chat.id,
                         message_id=sent_message.message_id
                     )
-                elif sent_message and full_response.strip(): # Other error during final MD edit
+                elif sent_message and full_response.strip(): 
                     print(f"Error in final message edit (Markdown): {e}, falling back to plain text for non-empty response.")
                     await bot.edit_message_text(
-                        full_response, # Plain text
+                        full_response, 
                         chat_id=sent_message.chat.id,
                         message_id=sent_message.message_id
                     )
-                else: # Error on an already problematic state (e.g. empty full_response or no sent_message)
-                    if full_response.strip(): # If there was content, but other edit issue
+                else: 
+                    if full_response.strip(): 
                          raise
             except Exception as final_e: 
                 print(f"Error in final message edit (non-Markdown fallback): {final_e}")
-                if sent_message and not full_response.strip(): # Should have been caught earlier
+                if sent_message and not full_response.strip(): 
                      await bot.edit_message_text(
                         "پاسخ خالی دریافت شد.", 
                         chat_id=sent_message.chat.id,
@@ -295,14 +299,14 @@ async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
         if sent_message:
             try:
                 await bot.edit_message_text(
-                    escape(error_message_detail), # Escape for MarkdownV2
+                    escape(error_message_detail), 
                     chat_id=sent_message.chat.id,
                     message_id=sent_message.message_id,
                     parse_mode="MarkdownV2"
                 )
             except Exception as edit_err_md:
                 print(f"Could not edit message to show Markdown error: {edit_err_md}")
-                try: # Fallback to plain text error
+                try: 
                     await bot.edit_message_text(
                         f"{error_info}\nجزئیات خطا: {str(e)}",
                         chat_id=sent_message.chat.id,
@@ -312,7 +316,7 @@ async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
                      print(f"Could not edit message to show plain text error: {edit_err_plain}")
                      await bot.reply_to(message, f"{error_info}\nجزئیات خطا: {str(e)}")
         else:
-            await bot.reply_to(message, f"{error_info}\nجزئیات خطا: {str(e)}") # No parse_mode, plain text
+            await bot.reply_to(message, f"{error_info}\nجزئیات خطا: {str(e)}") 
 
 async def gemini_edit(bot: TeleBot, message: Message, m: str, photo_file: bytes):
     image = Image.open(io.BytesIO(photo_file))
@@ -320,11 +324,14 @@ async def gemini_edit(bot: TeleBot, message: Message, m: str, photo_file: bytes)
     sent_progress_message = None
     try:
         sent_progress_message = await bot.reply_to(message, "در حال پردازش تصویر با دستور شما... 🖼️")
-        # generation_config from config.py already includes safety_settings
-        response = await client.aio.models.generate_content(
-            model=model_3, 
+        
+        # Ensure model_3 has the prefix before using get()
+        full_model_3_name = ensure_model_prefix(model_3)
+        model_instance = client.aio.models.get(full_model_3_name)
+        
+        response = await model_instance.generate_content( # Use generate_content on model_instance
             contents=[m, image],
-            generation_config=generation_config # Pass the generation_config object
+            generation_config=generation_config 
         )
         if sent_progress_message:
             await bot.delete_message(sent_progress_message.chat.id, sent_progress_message.message_id)
@@ -338,22 +345,21 @@ async def gemini_edit(bot: TeleBot, message: Message, m: str, photo_file: bytes)
         for part in response.candidates[0].content.parts:
             if hasattr(part, 'text') and part.text is not None:
                 text_response = part.text
-                # Split long messages
                 current_pos = 0
                 while current_pos < len(text_response):
-                    end_pos = current_pos + 4000 # Max length for Telegram messages is 4096, leave some buffer
+                    end_pos = current_pos + 4000 
                     chunk_text = text_response[current_pos:end_pos]
                     try:
                         await bot.send_message(message.chat.id, escape(chunk_text), parse_mode="MarkdownV2")
                     except Exception as e_md:
                         print(f"Error sending MD chunk in gemini_edit: {e_md}, falling back to plain.")
-                        await bot.send_message(message.chat.id, chunk_text) # Plain text
+                        await bot.send_message(message.chat.id, chunk_text)
                     current_pos = end_pos
                 processed_parts = True
             elif hasattr(part, 'inline_data') and part.inline_data is not None and hasattr(part.inline_data, 'data'):
                 photo = part.inline_data.data
                 caption_text = escape("نتیجه ویرایش تصویر:") if not m.lower().startswith("تصویر را توصیف کن") else escape(m)
-                await bot.send_photo(message.chat.id, photo, caption=caption_text[:1024]) # Caption limit 1024
+                await bot.send_photo(message.chat.id, photo, caption=caption_text[:1024]) 
                 processed_parts = True
         if not processed_parts:
             await bot.send_message(message.chat.id, "پاسخی از مدل دریافت نشد یا محتوای قابل نمایشی وجود نداشت.")
@@ -372,11 +378,14 @@ async def gemini_edit(bot: TeleBot, message: Message, m: str, photo_file: bytes)
 async def gemini_draw(bot:TeleBot, message:Message, m:str):
     client = get_random_client()
     try:
-        # generation_config from config.py already includes safety_settings
-        response = await client.aio.models.generate_content(
-            model=model_3, 
+        # Ensure model_3 has the prefix before using get()
+        full_model_3_name = ensure_model_prefix(model_3)
+        model_instance = client.aio.models.get(full_model_3_name)
+
+        # Use generate_content on the model instance
+        response = await model_instance.generate_content( 
             contents=[m],  
-            generation_config=generation_config # Pass the generation_config object
+            generation_config=generation_config 
         )
     except Exception as e:
         traceback.print_exc()
@@ -394,7 +403,7 @@ async def gemini_draw(bot:TeleBot, message:Message, m:str):
             photo_data = part.inline_data.data
             try:
                 caption_text = escape(f"تصویر تولید شده برای: {m[:100]}")
-                await bot.send_photo(message.chat.id, photo_data, caption=caption_text[:1024]) # Caption limit
+                await bot.send_photo(message.chat.id, photo_data, caption=caption_text[:1024]) 
                 image_generated = True
                 break 
             except Exception as send_photo_e:
@@ -404,7 +413,7 @@ async def gemini_draw(bot:TeleBot, message:Message, m:str):
                 break 
     if not image_generated:
         text_response_parts = []
-        for part_item in response.candidates[0].content.parts: # Renamed part to part_item
+        for part_item in response.candidates[0].content.parts: 
             if hasattr(part_item, 'text') and part_item.text is not None:
                 text_response_parts.append(part_item.text)
         if text_response_parts:
@@ -418,7 +427,7 @@ async def gemini_draw(bot:TeleBot, message:Message, m:str):
                     await bot.send_message(message.chat.id, response_message, parse_mode="MarkdownV2")
                 except Exception as send_text_e:
                     print(f"Error sending MarkdownV2 text in gemini_draw, falling back: {send_text_e}")
-                    await bot.send_message(message.chat.id, f"مدل تصویری تولید نکرد، اما این پیام را ارسال کرد:\n{full_text_response}") # Plain text
+                    await bot.send_message(message.chat.id, f"مدل تصویری تولید نکرد، اما این پیام را ارسال کرد:\n{full_text_response}") 
             else: 
                  await bot.send_message(message.chat.id, "تصویری تولید نشد و پاسخی متنی نیز از مدل دریافت نگردید.")
         else: 
