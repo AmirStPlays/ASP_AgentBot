@@ -133,7 +133,7 @@ async def load_user_chats_async():
                 try:
                     # Ensure model name has prefix when getting the model instance
                     full_model_name = ensure_model_prefix(model_name_to_load)
-                    model_instance = client.aio.models.get(full_model_name) # <-- Corrected here
+                    model_instance = await client.aio.models.get(name=full_model_name) # MODIFIED HERE
                     
                     chat_session = model_instance.start_chat(
                         history=rehydrated_history if rehydrated_history else None,
@@ -181,7 +181,7 @@ async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
 
 
             # Get model instance first
-            model_instance = client.aio.models.get(full_model_type) # <-- Use full model type here
+            model_instance = await client.aio.models.get(name=full_model_type) # MODIFIED HERE
             # Start chat with safety settings
             chat = model_instance.start_chat(
                 history=[], 
@@ -327,7 +327,7 @@ async def gemini_edit(bot: TeleBot, message: Message, m: str, photo_file: bytes)
         
         # Ensure model_3 has the prefix before using get()
         full_model_3_name = ensure_model_prefix(model_3)
-        model_instance = client.aio.models.get(full_model_3_name)
+        model_instance = await client.aio.models.get(name=full_model_3_name) # MODIFIED HERE
         
         response = await model_instance.generate_content( # Use generate_content on model_instance
             contents=[m, image],
@@ -380,7 +380,7 @@ async def gemini_draw(bot:TeleBot, message:Message, m:str):
     try:
         # Ensure model_3 has the prefix before using get()
         full_model_3_name = ensure_model_prefix(model_3)
-        model_instance = client.aio.models.get(full_model_3_name)
+        model_instance = await client.aio.models.get(name=full_model_3_name) # MODIFIED HERE
 
         # Use generate_content on the model instance
         response = await model_instance.generate_content( 
