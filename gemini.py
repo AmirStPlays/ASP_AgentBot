@@ -10,10 +10,10 @@ from config import conf, generation_config
 from datetime import datetime, timezone, timedelta
 from google import genai
 
-gemini_draw_dict = {}
-gemini_chat_dict = {}
-gemini_pro_chat_dict = {}
-default_model_dict = {}
+
+
+user_chats = {}
+
 
 model_1                 =       conf["model_1"]
 model_2                 =       conf["model_2"]
@@ -33,7 +33,10 @@ GEMINI_API_KEYS = [
     "AIzaSyAc2PYevmpUo_3PW5PMJpu491eg9EaqWqY",
     "AIzaSyCrSk31t3oLsK4uiDcZwo20cDGkxa8IuVg",
     "AIzaSyAE6JIR_tjXSWbXRTWvd1POKIOMkTzf5O8",
-    "AIzaSyCf5kmryeqRICx0zZLhU6o40O9cbQCCjfQ"
+    "AIzaSyCf5kmryeqRICx0zZLhU6o40O9cbQCCjfQ",
+    "AIzaSyBOIXuEQl9WgW5apBINjoCtXvLm8WZ_xnA",
+    "AIzaSyA6p0iVHt4M9THM08kaOfLdglV-aCMq4s4",
+    "AIzaSyB9FY6yLciPeX_0YT2nnGDiofYGgogWnoU"
 ]
 
 def get_random_client():
@@ -46,18 +49,13 @@ def get_random_client():
 async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
     client = get_random_client()
     sent_message = None
+    user_id_str = str(message.from_user.id)
     try:
         sent_message = await bot.reply_to(message, before_generate_info) # Using consistent message
 
-        chat = None
-        user_id_str = str(message.from_user.id)
+        chat = user_chats.get(user_id_str)
 
-        if model_type == model_1:
-            chat_dict = gemini_chat_dict
-        else:
-            chat_dict = gemini_pro_chat_dict
-
-        if user_id_str not in chat_dict:
+        if not chat:
             chat = client.aio.chats.create(model=model_type, config={'tools': [search_tool]})
             
             # Send the default system prompt if it exists for new chats
@@ -79,9 +77,9 @@ async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
                 except Exception as e_default_prompt:
                     print(f"Warning: Could not send default system prompt for user {user_id_str}: {e_default_prompt}")
             
-            chat_dict[user_id_str] = chat
+            user_chats[user_id_str] = chat
         else:
-            chat = chat_dict[user_id_str]
+            chat = user_chats[user_id_str]
 
         response = await chat.send_message_stream(m)
 
@@ -97,7 +95,7 @@ async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
                 if current_time - last_update >= update_interval:
                     try:
                         await bot.edit_message_text(
-                            escape(full_response + "✍️"), # Add typing indicator during stream
+                            escape(full_response + "|"), # Add typing indicator during stream
                             chat_id=sent_message.chat.id,
                             message_id=sent_message.message_id,
                             parse_mode="MarkdownV2"
@@ -106,7 +104,7 @@ async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
                         if "parse markdown" in str(e).lower():
                             try:
                                 await bot.edit_message_text(
-                                    full_response + "✍️",
+                                    full_response + "|",
                                     chat_id=sent_message.chat.id,
                                     message_id=sent_message.message_id
                                     )
@@ -166,19 +164,23 @@ async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
 async def gemini_edit(bot: TeleBot, message: Message, m: str, photo_file: bytes):
     image = Image.open(io.BytesIO(photo_file))
     client = get_random_client()
+    user_id_str = str(message.from_user.id)
+    chat = user_chats.get(user_id_str)
+
+    if not chat:
+        chat = client.aio.chats.create(model=model_3, config=generation_config)
+        user_chats[user_id_str] = chat
+
     sent_progress_message = None
     try:
-        # It's good practice to notify the user that processing has started,
-        # especially for potentially long operations like image processing.
         sent_progress_message = await bot.reply_to(message, "در حال پردازش تصویر با دستور شما... 🖼️")
 
         response = await client.aio.models.generate_content(
-            model=model_3, # Ensure model_3 is appropriate for text + image input and text/image output
-            contents=[m, image], # Prompt 'm' comes first, then the image
+            model=model_3,
+            contents=[m, image],
             config=generation_config
         )
 
-        # Delete the progress message once we have a response
         if sent_progress_message:
             await bot.delete_message(sent_progress_message.chat.id, sent_progress_message.message_id)
 
@@ -187,12 +189,10 @@ async def gemini_edit(bot: TeleBot, message: Message, m: str, photo_file: bytes)
             await bot.send_message(message.chat.id, f"{error_info}\nپاسخ معتبری از سرویس دریافت نشد.")
             return
 
-        # Process parts
         processed_parts = False
         for part in response.candidates[0].content.parts:
             if hasattr(part, 'text') and part.text is not None:
                 text_response = part.text
-                # Send text in chunks if too long
                 while len(text_response) > 4000:
                     await bot.send_message(message.chat.id, escape(text_response[:4000]), parse_mode="MarkdownV2")
                     text_response = text_response[4000:]
@@ -201,48 +201,35 @@ async def gemini_edit(bot: TeleBot, message: Message, m: str, photo_file: bytes)
                 processed_parts = True
             elif hasattr(part, 'inline_data') and part.inline_data is not None and hasattr(part.inline_data, 'data'):
                 photo = part.inline_data.data
-                await bot.send_photo(message.chat.id, photo, caption=escape("نتیجه ویرایش تصویر:") if not m.startswith("تصویر را توصیف کن") else escape(m)) # Add caption to output image
+                await bot.send_photo(message.chat.id, photo, caption=escape("نتیجه ویرایش تصویر:") if not m.startswith("تصویر را توصیف کن") else escape(m))
                 processed_parts = True
-        
+
         if not processed_parts:
             await bot.send_message(message.chat.id, "پاسخی از مدل دریافت نشد یا محتوای قابل نمایشی وجود نداشت.")
-
 
     except Exception as e:
         traceback.print_exc()
         error_message_detail = f"{error_info}\nجزئیات خطا: {str(e)}"
-        if sent_progress_message: # If progress message was sent, try to edit it to show error
+        if sent_progress_message:
             try:
                 await bot.edit_message_text(error_message_detail, chat_id=sent_progress_message.chat.id, message_id=sent_progress_message.message_id)
-            except: # If editing fails, send a new message
+            except:
                 await bot.send_message(message.chat.id, error_message_detail)
-        else: # If no progress message, send error as a new message
+        else:
             await bot.send_message(message.chat.id, error_message_detail)
 
 
+
 async def gemini_draw(bot:TeleBot, message:Message, m:str):
-    # gemini_draw_dict is used to maintain chat history for image generation model if it supports multi-turn.
-    # If model_3 for image generation is stateless per call for drawing, this dict might not be strictly necessary for history,
-    # but can be kept for consistency or future models that might benefit from it.
-    chat_dict = gemini_draw_dict 
     client = get_random_client()
     user_id_str = str(message.from_user.id)
-
-    if user_id_str not in chat_dict:
-        # For image generation, a chat session might not be needed if each call is independent.
-        # However, if the API benefits from context or if we want to use specific chat features:
-        chat = client.aio.chats.create(
-            model=model_3, # Uses model_3 for image generation
-            config=generation_config, # Contains safety settings
-        )
-        chat_dict[user_id_str] = chat
-    else:
-        chat = chat_dict[user_id_str]
+    chat = user_chats.get(user_id_str)
+    if not chat:
+            chat = client.aio.chats.create(model=model_3, config=generation_config)
+            user_chats[user_id_str] = chat
 
     try:
-        # The prompt 'm' is sent to the model.
-        # For some image generation models, the response might directly be image data or include it.
-        response = await chat.send_message(m) 
+        response = await chat.send_message(m)
     except Exception as e:
         traceback.print_exc()
         await bot.send_message(message.chat.id, f"{error_info}\nخطا در هنگام تولید تصویر: {str(e)}")
@@ -256,18 +243,17 @@ async def gemini_draw(bot:TeleBot, message:Message, m:str):
     processed_parts = False
     for part in response.candidates[0].content.parts:
         if hasattr(part, 'text') and part.text is not None:
-            # Sometimes image models return text, e.g., acknowledgments or errors.
             text = part.text
-            while len(text) > 4000: # Split long messages
+            while len(text) > 4000:
                 await bot.send_message(message.chat.id, escape(text[:4000]), parse_mode="MarkdownV2")
                 text = text[4000:]
             if text:
                 await bot.send_message(message.chat.id, escape(text), parse_mode="MarkdownV2")
-            processed_parts = True # Consider text part as processed
+            processed_parts = True
         elif hasattr(part, 'inline_data') and part.inline_data is not None and hasattr(part.inline_data, 'data'):
             photo_data = part.inline_data.data
             await bot.send_photo(message.chat.id, photo_data, caption=escape(f"تصویر تولید شده برای: {m[:100]}"))
             processed_parts = True
-            
+
     if not processed_parts:
         await bot.send_message(message.chat.id, "تصویری تولید نشد یا محتوای قابل نمایشی وجود نداشت.")
