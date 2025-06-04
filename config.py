@@ -1,4 +1,4 @@
-from google.generativeai import types
+from google.genai import types
 
 mahsa_prompt = """
 ***شخصیت تو:***
@@ -80,7 +80,7 @@ default_prompt = """
 
 """ 
 
-default_prompt = mahsa_prompt + "\n\n" + default_prompt
+full_prompt = mahsa_prompt + "\n\n" + default_prompt
 
 default_image_processing_prompt = """
 این تصویر را با دقت بررسی کن. محتوای آن را توصیف کن.
@@ -94,11 +94,11 @@ conf = {
     "error_info":           "⚠️⚠️⚠️\nمشکلی پیش آمد!\nلطفاً درخواست خود را تغییر دهید یا با ادمین ارتباط بگیرید!\n@AmirStPlays",
     "before_generate_info": "در حال نوشتن پاسخ ...✍️",
     "download_pic_notify":  "🤖 در حال بارگذاری تصویر 🤖",
-    "model_1":              "gemini-2.0-flash",
-    "model_2":              "gemini-2.0-flash-thinking-exp-01-21",   
+    "model_1":              "gemini-2.0-flash-thinking-exp-01-21",
+    "model_2":              "gemini-2.5-flash-preview-05-20",   
     "model_3":              "gemini-2.0-flash-preview-image-generation", 
-    "streaming_update_interval": 0.55,
-    "default_system_prompt": default_prompt,
+    "streaming_update_interval": 0.7,
+    "default_system_prompt": full_prompt,
     "default_image_processing_prompt": default_image_processing_prompt,
     "persian_messages": {
         "welcome": "به ایجنت ASP خوش آمدید.\nمیتوانید از دستور های ربات استفاده کنید و یا پیام خودتون رو بفرستید.\nدر صورت نیاز /help را بزنید.",
@@ -120,7 +120,13 @@ conf = {
         "channel_button_confirm": "✅ تایید عضویت",
         "phone_button_share": "📱 اشتراک گذاری شماره تلفن",
         "photo_caption_prompt": "لطفاً یک توضیح یا دستور برای عکس ارائه دهید. برای مثال: `این تصویر چیست؟` یا `مسئله ریاضی داخل عکس را حل کن`",
-        "photo_command_caption_info": "برای ویرایش عکس، روی آن ریپلای کرده و از دستور `/edit <توضیح ویرایش>` استفاده کنید.\nبرای تولید تصویر جدید از متن، از دستور `/img <توضیح تصویر>` استفاده کنید."
+        "photo_command_caption_info": "برای ویرایش عکس، روی آن ریپلای کرده و از دستور `/edit <توضیح ویرایش>` استفاده کنید.\nبرای تولید تصویر جدید از متن، از دستور `/img <توضیح تصویر>` استفاده کنید.",
+        "share_phone_group_prompt": "برای تکمیل ثبت‌نام و استفاده از ربات در گروه، لطفاً به چت خصوصی ربات (PV) مراجعه کرده و شماره تلفن خود را به اشتراک بگذارید:",
+        "go_to_pv_button": "رفتن به چت خصوصی ربات",
+        "group_prompt_needed": "لطفاً پس از نقطه `.`، دستور یا سوال خود را بنویسید. مثال: `.سلام، خوبی؟`",
+        "image_prompt_needed_group": "لطفاً پس از نقطه `.` در کپشن عکس، توضیح یا دستور خود را بنویسید. مثال: `.این عکس را توصیف کن`",
+        "share_phone_group_prompt_after_join": "عضویت شما در کانال تایید شد! برای ادامه، لطفاً به چت خصوصی ربات بروید و شماره تلفن خود را به اشتراک بگذارید:"
+
     }  
     
 }
@@ -129,6 +135,7 @@ conf = {
 USER_AUTH_FILE = "user_auth.json"
 CHANNEL_USERNAME = "@ASP_bot_collection" # نام کاربری کانال شما
 
+# تنظیمات ایمنی برای تولید محتوا
 safety_settings = [
     {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
     {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
@@ -136,12 +143,8 @@ safety_settings = [
     {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
 ]
 
-
-
-
-generation_config = {
-    "response_modalities": ["Text", "Image"],
-    "safety_settings": safety_settings
-}
-
-
+# پیکربندی نهایی تولید محتوا بدون محدودیت
+generation_config = types.GenerateContentConfig(
+    response_modalities=['Text', 'Image'],
+    safety_settings=safety_settings
+)
