@@ -136,7 +136,7 @@ safety_settings = [
     {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
 ]
 
-]
+
 
 generation_config = {
     "response_modalities": ["Text", "Image"],
