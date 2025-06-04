@@ -9,7 +9,8 @@ from telebot import TeleBot
 # Import safety_settings directly from config to be used in start_chat
 from config import conf, generation_config, safety_settings as global_safety_settings_list
 from datetime import datetime, timezone, timedelta
-import google.generativeai as genai # Ensure genai is imported
+import google.generativeai as genai
+from google import genai as gen # Ensure genai is imported
 from google.generativeai import types as genai_types # For Content, Part, Blob
 
 import json
@@ -49,7 +50,7 @@ def get_random_client():
     # Assuming genai.configure() is not needed here if Client takes api_key directly
     # or that it's configured globally elsewhere.
     # If not, you might need genai.configure(api_key=api_key) before returning client
-    return genai.Client(api_key=api_key)
+    return gen.Client(api_key=api_key)
 
 # Helper to ensure model name has 'models/' prefix
 def ensure_model_prefix(model_name):
