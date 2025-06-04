@@ -19,9 +19,8 @@ model_3                 =       conf["model_3"]
 default_image_prompt    =       conf.get("default_image_processing_prompt", "این تصویر را توصیف کن.")
 
 
-gemini_chat_dict        = gemini.gemini_chat_dict
-gemini_pro_chat_dict    = gemini.gemini_pro_chat_dict
-default_model_dict      = gemini.default_model_dict
+# دیکشنری برای نگهداری ترجیح مدل پیش‌فرض کاربر
+user_model_preference = {}
 
 
 # --- مدیریت فایل کاربران ---
@@ -133,6 +132,10 @@ async def start(message: Message, bot: TeleBot) -> None:
 
 @pre_command_checks
 async def gemini_stream_handler(message: Message, bot: TeleBot) -> None:
+    # این تابع دیگر استفاده نمی‌شود زیرا دستور /gemini و /gemini_pro حذف شده‌اند
+    # و عملکرد آنها در gemini_private_handler با استفاده از switch ادغام شده است.
+    # اما اگر بخواهید دستورات مجزا را حفظ کنید، می‌توانید آن را فعال نگه دارید.
+    # برای مثال، اگر دستور /gemini همچنان باید به model_1 اشاره کند:
     try:
         m = message.text.strip().split(maxsplit=1)[1].strip()
         if not m:
@@ -143,8 +146,10 @@ async def gemini_stream_handler(message: Message, bot: TeleBot) -> None:
         return
     await gemini.gemini_stream(bot, message, m, model_1)
 
+
 @pre_command_checks
 async def gemini_pro_stream_handler(message: Message, bot: TeleBot) -> None:
+    # این تابع دیگر استفاده نمی‌شود. اگر دستور /gemini_pro را می‌خواهید:
     try:
         m = message.text.strip().split(maxsplit=1)[1].strip()
         if not m:
@@ -158,12 +163,13 @@ async def gemini_pro_stream_handler(message: Message, bot: TeleBot) -> None:
 @pre_command_checks
 async def clear(message: Message, bot: TeleBot) -> None:
     user_id_str = str(message.from_user.id)
-    if user_id_str in gemini.gemini_chat_dict:
-        del gemini.gemini_chat_dict[user_id_str]
-    if user_id_str in gemini.gemini_pro_chat_dict:
-        del gemini.gemini_pro_chat_dict[user_id_str]
-    if user_id_str in gemini.gemini_draw_dict: # Also clear draw history if any
-        del gemini.gemini_draw_dict[user_id_str]
+    if user_id_str in gemini.user_chats: # استفاده از gemini.user_chats
+        del gemini.user_chats[user_id_str]
+    
+    # پاک کردن ترجیح مدل کاربر
+    if user_id_str in user_model_preference:
+        del user_model_preference[user_id_str]
+        
     await bot.reply_to(message, pm["history_cleared"])
 
 @pre_command_checks
@@ -173,12 +179,18 @@ async def switch(message: Message, bot: TeleBot) -> None:
         return
 
     user_id_str = str(message.from_user.id)
-    if user_id_str not in gemini.default_model_dict or gemini.default_model_dict[user_id_str] is False:
-        gemini.default_model_dict[user_id_str] = True
-        await bot.reply_to( message , pm["switched_to_model_1"].format(model_1))
-    else:
-        gemini.default_model_dict[user_id_str] = False
+    
+    # دریافت ترجیح فعلی، پیش‌فرض True (model_1) اگر تنظیم نشده باشد
+    current_prefers_model_1 = user_model_preference.get(user_id_str, True) 
+
+    if current_prefers_model_1:
+        # در حال حاضر model_1 را ترجیح می‌دهد (یا پیش‌فرض)، به model_2 تغییر دهید
+        user_model_preference[user_id_str] = False
         await bot.reply_to( message , pm["switched_to_model_2"].format(model_2))
+    else:
+        # در حال حاضر model_2 را ترجیح می‌دهد، به model_1 تغییر دهید
+        user_model_preference[user_id_str] = True
+        await bot.reply_to( message , pm["switched_to_model_1"].format(model_1))
 
 
 @pre_command_checks
@@ -188,13 +200,14 @@ async def gemini_private_handler(message: Message, bot: TeleBot) -> None:
         return
         
     user_id_str = str(message.from_user.id)
-    if user_id_str not in gemini.default_model_dict:
-        gemini.default_model_dict[user_id_str] = True 
+    
+    # دریافت ترجیح کاربر، پیش‌فرض True (model_1) اگر تنظیم نشده باشد
+    prefers_model_1 = user_model_preference.get(user_id_str, True)
 
-    if gemini.default_model_dict[user_id_str]:
-        await gemini.gemini_stream(bot,message,m,model_1)
+    if prefers_model_1:
+        await gemini.gemini_stream(bot, message, m, model_1)
     else:
-        await gemini.gemini_stream(bot,message,m,model_2)
+        await gemini.gemini_stream(bot, message, m, model_2)
 
 @pre_command_checks
 async def gemini_photo_handler(message: Message, bot: TeleBot) -> None:
@@ -202,23 +215,19 @@ async def gemini_photo_handler(message: Message, bot: TeleBot) -> None:
     prompt_to_use = ""
 
     if caption.lower().startswith("/edit ") or caption.lower().startswith("/img "):
-        # If caption starts with /edit or /img, inform user about correct usage and do not process.
-        # This handler is for general image understanding, not for commands in captions.
         await bot.reply_to(message, escape(pm["photo_command_caption_info"]), parse_mode="MarkdownV2")
         return
-    elif caption: # If there's a caption (and it's not /edit or /img)
+    elif caption: 
         prompt_to_use = caption
-    else: # No caption, or caption was a command (already handled)
-        prompt_to_use = default_image_prompt # Use the default image processing prompt
+    else: 
+        prompt_to_use = default_image_prompt
 
-    if not prompt_to_use: # Should not happen if logic is correct, but as a safeguard
+    if not prompt_to_use: 
         await bot.reply_to(message, escape(pm["photo_caption_prompt"]), parse_mode="MarkdownV2")
         return
 
     try:
         await bot.send_chat_action(message.chat.id, 'typing')
-        # await bot.send_message(message.chat.id, download_pic_notify) # Notify about download
-        
         file_path = await bot.get_file(message.photo[-1].file_id)
         photo_file = await bot.download_file(file_path.file_path)
 
@@ -227,7 +236,6 @@ async def gemini_photo_handler(message: Message, bot: TeleBot) -> None:
         await bot.reply_to(message, f"{error_info}\nDetails: {str(e)}")
         return
     
-    # Call gemini_edit (which uses model_3) for general photo processing
     await gemini.gemini_edit(bot, message, prompt_to_use, photo_file)
 
 
@@ -241,7 +249,6 @@ async def gemini_edit_handler(message: Message, bot: TeleBot) -> None:
         photo_message = original_message.reply_to_message
         command_text = original_message.text or ""
         try:
-            # Ensure it's the /edit command and not something else being replied to
             if not command_text.lower().startswith("/edit "):
                  await bot.reply_to(original_message, escape("برای ویرایش عکس، لطفاً با دستور /edit و توضیح ویرایش روی عکس ریپلای کنید."), parse_mode="MarkdownV2")
                  return
@@ -253,17 +260,16 @@ async def gemini_edit_handler(message: Message, bot: TeleBot) -> None:
         await bot.reply_to(original_message, pm["photo_edit_prompt"])
         return
 
-    if not text_prompt_from_command: # Should be caught by IndexError, but good to double check
+    if not text_prompt_from_command: 
         await bot.reply_to(original_message, escape("لطفا توضیح ویرایش را بعد از دستور /edit بنویسید."), parse_mode="MarkdownV2")
         return
         
-    if not photo_message or not photo_message.photo: # Should not happen if logic above is correct
+    if not photo_message or not photo_message.photo: 
         await bot.reply_to(original_message, pm["photo_edit_prompt"])
         return
 
     try:
         await bot.send_chat_action(original_message.chat.id, 'typing')
-        # await bot.send_message(original_message.chat.id, download_pic_notify) # Notify about download
         file_path = await bot.get_file(photo_message.photo[-1].file_id)
         photo_file = await bot.download_file(file_path.file_path)
     except Exception as e:
@@ -271,7 +277,6 @@ async def gemini_edit_handler(message: Message, bot: TeleBot) -> None:
         await bot.reply_to(original_message, f"{error_info}\nDetails: {str(e)}")
         return
     
-    # Call gemini_edit, which uses model_3, with the specific edit prompt
     await gemini.gemini_edit(bot, original_message, text_prompt_from_command, photo_file)
 
 
