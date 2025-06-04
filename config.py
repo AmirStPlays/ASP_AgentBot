@@ -138,6 +138,7 @@ safety_settings = [
 
 
 
+
 generation_config = {
     "response_modalities": ["Text", "Image"],
     "safety_settings": safety_settings
