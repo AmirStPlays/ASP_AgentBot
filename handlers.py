@@ -6,7 +6,7 @@ from telebot.types import Message
 from md2tgmd import escape
 import traceback
 from config import conf, USER_AUTH_FILE, CHANNEL_USERNAME
-import gemini
+import gemini 
 
 # بارگذاری پیام‌های فارسی
 pm = conf["persian_messages"]
@@ -46,7 +46,10 @@ def pre_command_checks(func):
     @wraps(func)
     async def wrapper(message: Message, bot: TeleBot, *args, **kwargs):
         user_id = message.from_user.id
+        chat_id = message.chat.id
+        chat_type = message.chat.type
         
+        # 1. Channel Membership Check
         try:
             member_status = await bot.get_chat_member(CHANNEL_USERNAME, user_id)
             if member_status.status not in ['member', 'administrator', 'creator']:
@@ -74,21 +77,33 @@ def pre_command_checks(func):
                 await bot.reply_to(message, error_info)
             return
 
+        # 2. Phone Authorization Check
         if user_id not in authorized_user_ids:
-            keyboard = telebot_types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True, one_time_keyboard=True)
-            phone_button = telebot_types.KeyboardButton(
-                text=pm["phone_button_share"],
-                request_contact=True
-            )
-            keyboard.add(phone_button)
-            await bot.reply_to(message, pm["share_phone_prompt"], reply_markup=keyboard)
-            return
+            if chat_type == "private":
+                keyboard = telebot_types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True, one_time_keyboard=True)
+                phone_button = telebot_types.KeyboardButton(
+                    text=pm["phone_button_share"],
+                    request_contact=True
+                )
+                keyboard.add(phone_button)
+                await bot.reply_to(message, pm["share_phone_prompt"], reply_markup=keyboard)
+            else: # Group chat
+                bot_info = await bot.get_me()
+                bot_username = bot_info.username
+                pv_keyboard = telebot_types.InlineKeyboardMarkup()
+                pv_button = telebot_types.InlineKeyboardButton(
+                    text=pm["go_to_pv_button"], 
+                    url=f"https://t.me/{bot_username}?start=auth_phone_group"
+                )
+                pv_keyboard.add(pv_button)
+                await bot.reply_to(message, pm["share_phone_group_prompt"], reply_markup=pv_keyboard)
+            return 
 
         return await func(message, bot, *args, **kwargs)
     return wrapper
 
+@pre_command_checks
 async def show_help(message: Message, bot: TeleBot):
-    # بخش‌های متنی که نیاز به escape دارند
     title = "راهنمای جامع استفاده از بات"
     img_description_raw = """برای تولید عکس توسط ربات ابتدا این دستور را از طریق منوی پایین چپ نگه داشته تا عبارت آن بر روی کیبورد نمایان بشه.
 پس از این متن خودتون رو جلوی دستور برای ساخت عکس بنویسید.
@@ -98,24 +113,24 @@ async def show_help(message: Message, bot: TeleBot):
 این عملیات هم میتونه کمی زمانبر باشه."""
     switch_description_raw = "با استفاده از این دستور میتونین مدل پردازش متن رو عوض کنید "
     help_description_raw = "برای دیدن راهنمای استفاده از بات از این دستور استفاده کنید "
+    group_text_raw = "در گروه ها، برای اینکه ربات به پیام متنی شما پاسخ دهد، پیام خود را با `.` شروع کنید. مثال: `.سلام خوبی؟`"
+    group_image_raw = "در گروه ها، برای پردازش یک عکس (مثلاً توصیف آن)، کپشن عکس را با `.` شروع کنید. مثال: `.این عکس چیست؟`"
     footer_raw = "در صورت داشتن هرگونه ابهام یا مشکل در ربات حتما به من بگید تا درستش کنم"
     admin_id_raw = "اینم آیدیم: @AmirStPlays"
 
-    # Escape کردن بخش‌های متنی
     help_text = f"**{escape(title)}**\n\n"
-
-    help_text += escape("1. دستور /img") + "\n"
-    help_text += "```\n" + escape(img_description_raw) + "\n```\n\n" # متن داخل بلاک کد هم escape شود برای اطمینان
-
-    help_text += escape("2. دستور /edit") + "\n"
+    help_text += escape("1. دستور /img (تولید تصویر)") + "\n"
+    help_text += "```\n" + escape(img_description_raw) + "\n```\n\n" 
+    help_text += escape("2. دستور /edit (ویرایش تصویر با ریپلای)") + "\n"
     help_text += "```\n" + escape(edit_description_raw) + "\n```\n\n"
-
-    help_text += escape("3. دستور /switch") + "\n"
+    help_text += escape("3. دستور /switch (تغییر مدل متن در چت خصوصی)") + "\n"
     help_text += "```\n" + escape(switch_description_raw) + "\n```\n\n"
-
-    help_text += escape("دستور /help") + "\n" # یا "4. دستور /help"
+    help_text += escape("4. دستور /help (همین راهنما)") + "\n" 
     help_text += "```\n" + escape(help_description_raw) + "\n```\n\n"
-
+    help_text += escape("5. استفاده در گروه (متن)") + "\n" 
+    help_text += "```\n" + escape(group_text_raw) + "\n```\n\n"
+    help_text += escape("6. استفاده در گروه (عکس)") + "\n" 
+    help_text += "```\n" + escape(group_image_raw) + "\n```\n\n"
     help_text += escape(footer_raw) + "\n"
     help_text += escape(admin_id_raw)
         
@@ -125,50 +140,41 @@ async def show_help(message: Message, bot: TeleBot):
 @pre_command_checks
 async def start(message: Message, bot: TeleBot) -> None:
     try:
+        # Check for start parameter for phone auth from group
+        args = message.text.split()
+        if len(args) > 1 and (args[1] == "auth_phone_group" or args[1] == "auth_phone_after_join_group"):
+            if message.chat.type == "private":
+                if message.from_user.id not in authorized_user_ids:
+                     # Send the actual phone request button
+                    keyboard = telebot_types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True, one_time_keyboard=True)
+                    phone_button = telebot_types.KeyboardButton(text=pm["phone_button_share"], request_contact=True)
+                    keyboard.add(phone_button)
+                    await bot.reply_to(message, pm["share_phone_prompt"], reply_markup=keyboard)
+                    return # Don't send welcome yet
+                else:
+                    await bot.reply_to(message, "شما قبلاً شماره خود را ثبت کرده‌اید. می‌توانید از ربات استفاده کنید.", reply_markup=telebot_types.ReplyKeyboardRemove())
+                    return
+
         await bot.reply_to(message , escape(pm["welcome"]), parse_mode="MarkdownV2")
     except Exception as e:
         traceback.print_exc()
         await bot.reply_to(message, error_info)
 
-@pre_command_checks
-async def gemini_stream_handler(message: Message, bot: TeleBot) -> None:
-    # این تابع دیگر استفاده نمی‌شود زیرا دستور /gemini و /gemini_pro حذف شده‌اند
-    # و عملکرد آنها در gemini_private_handler با استفاده از switch ادغام شده است.
-    # اما اگر بخواهید دستورات مجزا را حفظ کنید، می‌توانید آن را فعال نگه دارید.
-    # برای مثال، اگر دستور /gemini همچنان باید به model_1 اشاره کند:
-    try:
-        m = message.text.strip().split(maxsplit=1)[1].strip()
-        if not m:
-            await bot.reply_to(message, escape(pm["add_prompt_gemini"]), parse_mode="MarkdownV2")
-            return
-    except IndexError:
-        await bot.reply_to(message, escape(pm["add_prompt_gemini"]), parse_mode="MarkdownV2")
-        return
-    await gemini.gemini_stream(bot, message, m, model_1)
-
-
-@pre_command_checks
-async def gemini_pro_stream_handler(message: Message, bot: TeleBot) -> None:
-    # این تابع دیگر استفاده نمی‌شود. اگر دستور /gemini_pro را می‌خواهید:
-    try:
-        m = message.text.strip().split(maxsplit=1)[1].strip()
-        if not m:
-            await bot.reply_to(message, escape(pm["add_prompt_gemini_pro"]), parse_mode="MarkdownV2")
-            return
-    except IndexError:
-        await bot.reply_to(message, escape(pm["add_prompt_gemini_pro"]), parse_mode="MarkdownV2")
-        return
-    await gemini.gemini_stream(bot, message, m, model_2)
 
 @pre_command_checks
 async def clear(message: Message, bot: TeleBot) -> None:
-    user_id_str = str(message.from_user.id)
-    if user_id_str in gemini.user_chats: # استفاده از gemini.user_chats
+    user_id_str = str(message.from_user.id) # History is per user
+    history_cleared_flag = False
+    if user_id_str in gemini.user_chats: 
         del gemini.user_chats[user_id_str]
+        history_cleared_flag = True
     
-    # پاک کردن ترجیح مدل کاربر
-    if user_id_str in user_model_preference:
+    if user_id_str in user_model_preference: # This is also per user
         del user_model_preference[user_id_str]
+        history_cleared_flag = True # Though it might have been set above already
+    
+    if history_cleared_flag:
+        await gemini.save_user_chats() 
         
     await bot.reply_to(message, pm["history_cleared"])
 
@@ -179,50 +185,73 @@ async def switch(message: Message, bot: TeleBot) -> None:
         return
 
     user_id_str = str(message.from_user.id)
-    
-    # دریافت ترجیح فعلی، پیش‌فرض True (model_1) اگر تنظیم نشده باشد
     current_prefers_model_1 = user_model_preference.get(user_id_str, True) 
 
     if current_prefers_model_1:
-        # در حال حاضر model_1 را ترجیح می‌دهد (یا پیش‌فرض)، به model_2 تغییر دهید
         user_model_preference[user_id_str] = False
         await bot.reply_to( message , pm["switched_to_model_2"].format(model_2))
     else:
-        # در حال حاضر model_2 را ترجیح می‌دهد، به model_1 تغییر دهید
         user_model_preference[user_id_str] = True
         await bot.reply_to( message , pm["switched_to_model_1"].format(model_1))
 
 
 @pre_command_checks
 async def gemini_private_handler(message: Message, bot: TeleBot) -> None:
+    # This handler is already configured for private chats only via main.py registration
     m = message.text.strip()
-    if not m:
+    if not m: # Should not happen due to message.text check in registration
         return
         
     user_id_str = str(message.from_user.id)
-    
-    # دریافت ترجیح کاربر، پیش‌فرض True (model_1) اگر تنظیم نشده باشد
     prefers_model_1 = user_model_preference.get(user_id_str, True)
 
-    if prefers_model_1:
-        await gemini.gemini_stream(bot, message, m, model_1)
-    else:
-        await gemini.gemini_stream(bot, message, m, model_2)
+    model_to_use = model_1 if prefers_model_1 else model_2
+    await gemini.gemini_stream(bot, message, m, model_to_use)
 
 @pre_command_checks
+async def gemini_group_text_handler(message: Message, bot: TeleBot) -> None:
+    # This handler is for group messages starting with '.'
+    text = message.text.strip()
+    if not text.startswith('.'): # Should be caught by registration func, but double check
+        return
+    
+    m = text[1:].strip() # Remove the dot and strip
+    if not m:
+        await bot.reply_to(message, pm["group_prompt_needed"])
+        return
+        
+    user_id_str = str(message.from_user.id) # Per-user history in group
+    prefers_model_1 = user_model_preference.get(user_id_str, True) # Users can't use /switch in group, so this uses their PV preference or default
+
+    model_to_use = model_1 if prefers_model_1 else model_2
+    await gemini.gemini_stream(bot, message, m, model_to_use)
+
+
+@pre_command_checks # Apply decorator
 async def gemini_photo_handler(message: Message, bot: TeleBot) -> None:
     caption = (message.caption or "").strip()
     prompt_to_use = ""
+    is_group = message.chat.type != "private"
 
-    if caption.lower().startswith("/edit ") or caption.lower().startswith("/img "):
-        await bot.reply_to(message, escape(pm["photo_command_caption_info"]), parse_mode="MarkdownV2")
-        return
-    elif caption: 
-        prompt_to_use = caption
-    else: 
-        prompt_to_use = default_image_prompt
+    if is_group:
+        if not caption.startswith("."):
+            return # Ignore in group if caption doesn't start with .
+        prompt_to_use = caption[1:].strip()
+        if not prompt_to_use:
+            # await bot.reply_to(message, escape(pm["image_prompt_needed_group"]), parse_mode="MarkdownV2")
+            # return 
+            # Or use default if dot is present but no text after it. Let's use default.
+            prompt_to_use = default_image_prompt 
+    else: # Private chat
+        if caption.lower().startswith("/edit ") or caption.lower().startswith("/img "):
+            await bot.reply_to(message, escape(pm["photo_command_caption_info"]), parse_mode="MarkdownV2")
+            return
+        elif caption: 
+            prompt_to_use = caption
+        else: 
+            prompt_to_use = default_image_prompt
 
-    if not prompt_to_use: 
+    if not prompt_to_use: # Should only happen if logic changes above
         await bot.reply_to(message, escape(pm["photo_caption_prompt"]), parse_mode="MarkdownV2")
         return
 
@@ -230,12 +259,13 @@ async def gemini_photo_handler(message: Message, bot: TeleBot) -> None:
         await bot.send_chat_action(message.chat.id, 'typing')
         file_path = await bot.get_file(message.photo[-1].file_id)
         photo_file = await bot.download_file(file_path.file_path)
-
     except Exception as e:
         traceback.print_exc()
         await bot.reply_to(message, f"{error_info}\nDetails: {str(e)}")
         return
     
+    # For gemini_edit (which uses model_3), history isn't typically maintained in the same way as text chats.
+    # The call to gemini.gemini_edit doesn't rely on user_chats state from gemini_stream.
     await gemini.gemini_edit(bot, message, prompt_to_use, photo_file)
 
 
@@ -249,6 +279,7 @@ async def gemini_edit_handler(message: Message, bot: TeleBot) -> None:
         photo_message = original_message.reply_to_message
         command_text = original_message.text or ""
         try:
+            # Command /edit should work in groups and PV if called correctly
             if not command_text.lower().startswith("/edit "):
                  await bot.reply_to(original_message, escape("برای ویرایش عکس، لطفاً با دستور /edit و توضیح ویرایش روی عکس ریپلای کنید."), parse_mode="MarkdownV2")
                  return
@@ -265,7 +296,7 @@ async def gemini_edit_handler(message: Message, bot: TeleBot) -> None:
         return
         
     if not photo_message or not photo_message.photo: 
-        await bot.reply_to(original_message, pm["photo_edit_prompt"])
+        await bot.reply_to(original_message, pm["photo_edit_prompt"]) # Should be caught above
         return
 
     try:
@@ -281,7 +312,7 @@ async def gemini_edit_handler(message: Message, bot: TeleBot) -> None:
 
 
 @pre_command_checks
-async def draw_handler(message: Message, bot: TeleBot) -> None: # Handles /img now
+async def draw_handler(message: Message, bot: TeleBot) -> None: # Handles /img
     try:
         m = message.text.strip().split(maxsplit=1)[1].strip()
         if not m:
@@ -310,10 +341,13 @@ async def draw_handler(message: Message, bot: TeleBot) -> None: # Handles /img n
 
 # --- کنترلگرهای callback و contact ---
 async def handle_contact(message: Message, bot: TeleBot):
+    # This is only triggered when user shares contact in PV
     user_id = message.from_user.id
     save_authorized_user(user_id) 
     authorized_user_ids.add(user_id) 
     await bot.send_message(message.chat.id, pm["phone_shared_thanks"], reply_markup=telebot_types.ReplyKeyboardRemove())
+    # Potentially, resend the original command if it was queued, or tell user to try again.
+    # For now, just confirming and they can retry.
 
 
 async def handle_callback_query(call: telebot_types.CallbackQuery, bot: TeleBot):
@@ -322,7 +356,7 @@ async def handle_callback_query(call: telebot_types.CallbackQuery, bot: TeleBot)
     
     if call.data == "confirm_join":
         message_to_edit_id = message_with_button.message_id 
-        chat_to_edit_id = message_with_button.chat.id
+        chat_to_edit_id = message_with_button.chat.id # This is the chat where the button was pressed (PV or Group)
 
         try:
             await bot.answer_callback_query(call.id, "در حال بررسی عضویت...")
@@ -341,13 +375,25 @@ async def handle_callback_query(call: telebot_types.CallbackQuery, bot: TeleBot)
                     message_id=message_to_edit_id,
                     reply_markup=None
                 )
+                # Now check for phone authorization
                 if user_id not in authorized_user_ids:
-                    phone_keyboard = telebot_types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True, one_time_keyboard=True)
-                    phone_button = telebot_types.KeyboardButton(text=pm["phone_button_share"], request_contact=True)
-                    phone_keyboard.add(phone_button)
-                    await bot.send_message(chat_to_edit_id, pm["share_phone_prompt"], reply_markup=phone_keyboard)
+                    if chat_to_edit_id == user_id: # Callback was from a PV message (user_id is chat_id for PV)
+                        phone_keyboard = telebot_types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True, one_time_keyboard=True)
+                        phone_button = telebot_types.KeyboardButton(text=pm["phone_button_share"], request_contact=True)
+                        phone_keyboard.add(phone_button)
+                        await bot.send_message(chat_to_edit_id, pm["share_phone_prompt"], reply_markup=phone_keyboard)
+                    else: # Callback was from a group message
+                        bot_info = await bot.get_me()
+                        bot_username = bot_info.username
+                        pv_keyboard = telebot_types.InlineKeyboardMarkup()
+                        pv_button = telebot_types.InlineKeyboardButton(
+                            text=pm["go_to_pv_button"],
+                            url=f"https://t.me/{bot_username}?start=auth_phone_after_join_group"
+                        )
+                        pv_keyboard.add(pv_button)
+                        await bot.send_message(chat_to_edit_id, pm["share_phone_group_prompt_after_join"], reply_markup=pv_keyboard)
                 else:
-                    await bot.send_message(chat_to_edit_id, "عضویت شما تایید شد. لطفاً دستور قبلی خود را مجدداً ارسال کنید یا دستور جدیدی بدهید.")
+                    await bot.send_message(chat_to_edit_id, "عضویت شما تایید شد و قبلاً شماره خود را ثبت کرده‌اید. لطفاً دستور/پیام قبلی خود را مجدداً ارسال کنید.")
             else:
                 await bot.edit_message_text(
                     pm["membership_not_confirmed"],
@@ -358,7 +404,6 @@ async def handle_callback_query(call: telebot_types.CallbackQuery, bot: TeleBot)
         except Exception as e:
             print(f"TRACEBACK for Error in callback query for join confirmation (user: {user_id}):")
             traceback.print_exc()
-            
             await bot.answer_callback_query(call.id, "خطا در پردازش درخواست.")
             try:
                 await bot.edit_message_text(
