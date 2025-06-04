@@ -129,27 +129,18 @@ conf = {
 USER_AUTH_FILE = "user_auth.json"
 CHANNEL_USERNAME = "@ASP_bot_collection" # نام کاربری کانال شما
 
-# تنظیمات ایمنی برای تولید محتوا
-# BLOCK_NONE به معنای درخواست از API برای اعمال کمترین محدودیت ممکن بر اساس این دسته‌بندی‌ها است.
-# این تنظیم، بیشترین آزادی عمل را از طریق پارامترهای قابل کنترل به مدل می‌دهد.
-# با این حال، API یا مدل ممکن است همچنان محدودیت‌های داخلی غیرقابل تنظیم داشته باشند.
 safety_settings = [
-    {"category": cat, "threshold": "BLOCK_NONE"}
-    for cat in [
-        "HARM_CATEGORY_HARASSMENT",
-        "HARM_CATEGORY_HATE_SPEECH",
-        "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-        "HARM_CATEGORY_DANGEROUS_CONTENT",
-        "HARM_CATEGORY_VIOLENCE",
-        "HARM_CATEGORY_MEDICAL",
-        "HARM_CATEGORY_DEROGATORY",
-        "HARM_CATEGORY_TOXICITY",
-        "HARM_CATEGORY_VULNERABLE_GROUPS"
-    ]
+    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+]
+
 ]
 
 generation_config = {
     "response_modalities": ["Text", "Image"],
-    "safety_settings": safety_settings,
+    "safety_settings": safety_settings
 }
+
 
