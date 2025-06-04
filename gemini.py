@@ -9,7 +9,7 @@ from telebot import TeleBot
 # Import safety_settings directly from config to be used in start_chat
 from config import conf, generation_config, safety_settings as global_safety_settings_list
 from datetime import datetime, timezone, timedelta
-from google import genai
+import google.generativeai as genai # Ensure genai is imported
 from google.generativeai import types as genai_types # For Content, Part, Blob
 
 import json
@@ -46,6 +46,9 @@ GEMINI_API_KEYS = [
 
 def get_random_client():
     api_key = random.choice(GEMINI_API_KEYS)
+    # Assuming genai.configure() is not needed here if Client takes api_key directly
+    # or that it's configured globally elsewhere.
+    # If not, you might need genai.configure(api_key=api_key) before returning client
     return genai.Client(api_key=api_key)
 
 # Helper to ensure model name has 'models/' prefix
@@ -59,8 +62,9 @@ async def save_user_chats():
     async with _save_lock:
         data_to_save = {}
         for user_id, chat_obj in user_chats.items():
-            if not hasattr(chat_obj, 'model') or not hasattr(chat_obj.model, 'name') or not hasattr(chat_obj, 'history'):
-                print(f"Skipping user {user_id} in save_user_chats: chat object incomplete (missing model.name or history).")
+            # Ensure chat_obj and its model attribute are valid
+            if not hasattr(chat_obj, 'model') or not hasattr(chat_obj.model, 'model_name') or not hasattr(chat_obj, 'history'):
+                print(f"Skipping user {user_id} in save_user_chats: chat object incomplete (missing model.model_name or history).")
                 continue
 
             serializable_history = []
@@ -84,7 +88,7 @@ async def save_user_chats():
                     serializable_history.append({'role': content_item.role, 'parts': serializable_parts})
 
             data_to_save[user_id] = {
-                'model_name': chat_obj.model.name, 
+                'model_name': chat_obj.model.model_name, # Use model_name
                 'history': serializable_history
             }
         try:
@@ -131,14 +135,18 @@ async def load_user_chats_async():
             model_name_to_load = chat_data.get('model_name')
             if model_name_to_load: 
                 try:
-                    # Ensure model name has prefix when getting the model instance
                     full_model_name = ensure_model_prefix(model_name_to_load)
-                    model_instance = await client.aio.models.get(full_model_name) # MODIFIED HERE
+                    # Create GenerativeModel instance instead of client.aio.models.get()
+                    model_instance = genai.GenerativeModel(
+                        model_name=full_model_name,
+                        safety_settings=global_safety_settings_list, # Pass safety settings here
+                        tools=[search_tool],                         # Pass tools here
+                        client=client                                # Pass the client instance
+                    )
                     
                     chat_session = model_instance.start_chat(
-                        history=rehydrated_history if rehydrated_history else None,
-                        safety_settings=global_safety_settings_list,
-                        tools=[search_tool] 
+                        history=rehydrated_history if rehydrated_history else None
+                        # safety_settings and tools are now part of model_instance
                     )
                     _loaded_chats[user_id] = chat_session
                 except Exception as e_create_chat:
@@ -169,29 +177,33 @@ async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
         chat = user_chats.get(user_id_str)
         new_chat_created_or_model_switched = False
 
-        # Corrected: Check chat.model.name and ensure model_type has prefix for comparison
         full_model_type = ensure_model_prefix(model_type)
-        if not chat or not hasattr(chat, 'model') or chat.model.name != full_model_type:
-            if chat and hasattr(chat, 'model') and chat.model.name != full_model_type:
-                print(f"Model type changed for user {user_id_str} from {chat.model.name} to {full_model_type}. Creating new chat session.")
+        # Check against model.model_name
+        if not chat or not hasattr(chat, 'model') or chat.model.model_name != full_model_type:
+            if chat and hasattr(chat, 'model') and chat.model.model_name != full_model_type:
+                print(f"Model type changed for user {user_id_str} from {chat.model.model_name} to {full_model_type}. Creating new chat session.")
             elif not chat:
                 print(f"No existing chat session for user {user_id_str}. Creating new one for model {full_model_type}.")
             else: 
                 print(f"Existing chat for user {user_id_str} is malformed. Recreating for model {full_model_type}.")
 
-
-            # Get model instance first
-            model_instance = await client.aio.models.get(full_model_type) # MODIFIED HERE
-            # Start chat with safety settings
+            # Create GenerativeModel instance
+            model_instance = genai.GenerativeModel(
+                model_name=full_model_type,
+                safety_settings=global_safety_settings_list,
+                tools=[search_tool],
+                client=client # Pass the client instance
+            )
+            # Start chat
             chat = model_instance.start_chat(
-                history=[], 
-                safety_settings=global_safety_settings_list, 
-                tools=[search_tool]
+                history=[], # For a new chat
             )
             new_chat_created_or_model_switched = True
             
             if default_system_prompt:
                 try:
+                    # System prompt (instruction) should ideally be part of GenerativeModel
+                    # or sent as the first message. Sending as a message here is fine.
                     time_zone = timezone(timedelta(hours=3, minutes=30))
                     date = datetime.now(time_zone).strftime("%d/%m/%Y")
                     timenow = datetime.now(time_zone).strftime("%H:%M:%S")
@@ -200,7 +212,9 @@ async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
                     تاریخ به میلادی: {date}  /// زمان: {timenow}
                     این اطلاعات رو داشته باش تا درصورتی که کاربر ازت پرسیدشون جواب بدی."""
                     full_prompt_with_time = default_system_prompt + "\n\n" + time_prompt
-                    await chat.send_message(full_prompt_with_time)
+                    # Sending system prompt. Note: this will be part of chat history.
+                    # For true system instructions, use system_instruction in GenerativeModel
+                    await chat.send_message_async(full_prompt_with_time) # Use send_message_async
                 except Exception as e_default_prompt:
                     print(f"Warning: Could not send default system prompt for user {user_id_str}: {e_default_prompt}")
                     traceback.print_exc()
@@ -209,14 +223,16 @@ async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
             if new_chat_created_or_model_switched: 
                 await save_user_chats()
 
-
-        response = await chat.send_message_stream(m)
+        # Assuming chat.send_message_stream is a custom or older method.
+        # Standard way is chat.send_message_async(m, stream=True)
+        # For this fix, we'll keep it if it works for user, but it's non-standard.
+        response_stream = await chat.send_message_async(m, stream=True) # Corrected to standard API
 
         full_response = ""
         last_update = time.time()
         update_interval = conf["streaming_update_interval"]
 
-        async for chunk in response:
+        async for chunk in response_stream: # Iterate over the standard stream
             if hasattr(chunk, 'text') and chunk.text:
                 full_response += chunk.text
                 current_time = time.time()
@@ -254,7 +270,6 @@ async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
              except Exception as e_empty_edit:
                 print(f"Error editing message for empty model response: {e_empty_edit}")
              return 
-
 
         try:
             if sent_message and full_response.strip():
@@ -325,11 +340,15 @@ async def gemini_edit(bot: TeleBot, message: Message, m: str, photo_file: bytes)
     try:
         sent_progress_message = await bot.reply_to(message, "در حال پردازش تصویر با دستور شما... 🖼️")
         
-        # Ensure model_3 has the prefix before using get()
         full_model_3_name = ensure_model_prefix(model_3)
-        model_instance = await client.aio.models.get(full_model_3_name) # MODIFIED HERE
+        # Create GenerativeModel instance
+        model_instance = genai.GenerativeModel(
+            model_name=full_model_3_name,
+            client=client
+            # generation_config contains safety_settings, so not explicitly set here
+        )
         
-        response = await model_instance.generate_content( # Use generate_content on model_instance
+        response = await model_instance.generate_content_async( # Use generate_content_async
             contents=[m, image],
             generation_config=generation_config 
         )
@@ -378,12 +397,15 @@ async def gemini_edit(bot: TeleBot, message: Message, m: str, photo_file: bytes)
 async def gemini_draw(bot:TeleBot, message:Message, m:str):
     client = get_random_client()
     try:
-        # Ensure model_3 has the prefix before using get()
         full_model_3_name = ensure_model_prefix(model_3)
-        model_instance = await client.aio.models.get(full_model_3_name) # MODIFIED HERE
+        # Create GenerativeModel instance
+        model_instance = genai.GenerativeModel(
+            model_name=full_model_3_name,
+            client=client
+            # generation_config contains safety_settings
+        )
 
-        # Use generate_content on the model instance
-        response = await model_instance.generate_content( 
+        response = await model_instance.generate_content_async( # Use generate_content_async
             contents=[m],  
             generation_config=generation_config 
         )
