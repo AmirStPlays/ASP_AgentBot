@@ -1,4 +1,4 @@
-from google.genai import types
+from google.generativeai import types
 
 mahsa_prompt = """
 ***شخصیت تو:***
@@ -134,27 +134,22 @@ CHANNEL_USERNAME = "@ASP_bot_collection" # نام کاربری کانال شما
 # این تنظیم، بیشترین آزادی عمل را از طریق پارامترهای قابل کنترل به مدل می‌دهد.
 # با این حال، API یا مدل ممکن است همچنان محدودیت‌های داخلی غیرقابل تنظیم داشته باشند.
 safety_settings = [
-    types.SafetySetting(
-        category="HARM_CATEGORY_HARASSMENT",
-        threshold="BLOCK_NONE",
-    ),
-    types.SafetySetting(
-        category="HARM_CATEGORY_HATE_SPEECH",
-        threshold="BLOCK_NONE",
-    ),
-    types.SafetySetting(
-        category="HARM_CATEGORY_SEXUALLY_EXPLICIT",
-        threshold="BLOCK_NONE",
-    ),
-    types.SafetySetting(
-        category="HARM_CATEGORY_DANGEROUS_CONTENT",
-        threshold="BLOCK_NONE",
-    )
+    types.SafetySetting(category=cat, threshold="BLOCK_NONE")
+    for cat in [
+        "HARM_CATEGORY_HARASSMENT",
+        "HARM_CATEGORY_HATE_SPEECH",
+        "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+        "HARM_CATEGORY_DANGEROUS_CONTENT",
+        "HARM_CATEGORY_VIOLENCE",
+        "HARM_CATEGORY_MEDICAL",
+        "HARM_CATEGORY_DEROGATORY",
+        "HARM_CATEGORY_TOXICITY",
+        "HARM_CATEGORY_VULNERABLE_GROUPS"
+    ]
 ]
 
-
-# پیکربندی تولید محتوا که شامل تنظیمات ایمنی نیز می‌شود
+# پیکربندی نهایی تولید محتوا بدون محدودیت
 generation_config = types.GenerateContentConfig(
-     response_modalities=['Text', 'Image'], # برای مدل‌هایی که می‌توانند تصویر تولید کنند
-    safety_settings=safety_settings,
+    response_modalities=['Text', 'Image'],
+    safety_settings=safety_settings
 )
