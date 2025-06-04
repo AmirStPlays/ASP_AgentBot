@@ -6,3 +6,4 @@ pyTelegramBotAPI==4.15.5
 md2tgmd==0.1.6
 aiohttp==3.9.5
 flask
+aiofiles
