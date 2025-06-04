@@ -10,8 +10,38 @@ from config import conf, generation_config
 from datetime import datetime, timezone, timedelta
 from google import genai
 
-# Shared memory for all gemini interactions
+import json
+import os
+
+
 user_chats = {}  # user_id -> chat
+USER_CHATS_FILE = "user_chats_data.json" # Example file for potential future use
+
+
+
+async def load_user_chats_async():
+    global user_chats
+    user_chats = {}
+    print("Initialized in-memory user_chats dictionary.")
+
+    if os.path.exists(USER_CHATS_FILE):
+        try:
+            with open(USER_CHATS_FILE, "r") as f:
+                pass
+        except Exception as e:
+            print(f"Error loading user chats from file (not implemented for Chat objects): {e}")
+            user_chats = {}   
+async def save_user_chats():
+
+    print("save_user_chats called. (Note: True persistence of genai.Chat objects is not implemented here).")
+
+    try:
+        with open(USER_CHATS_FILE, "w") as f:
+            pass
+    except Exception as e:
+        print(f"Error saving user chats to file (not implemented for Chat objects): {e}")
+
+
 
 model_1 = conf["model_1"]
 model_2 = conf["model_2"]
