@@ -134,7 +134,7 @@ CHANNEL_USERNAME = "@ASP_bot_collection" # نام کاربری کانال شما
 # این تنظیم، بیشترین آزادی عمل را از طریق پارامترهای قابل کنترل به مدل می‌دهد.
 # با این حال، API یا مدل ممکن است همچنان محدودیت‌های داخلی غیرقابل تنظیم داشته باشند.
 safety_settings = [
-    types.SafetySetting(category=cat, threshold="BLOCK_NONE")
+    {"category": cat, "threshold": "BLOCK_NONE"}
     for cat in [
         "HARM_CATEGORY_HARASSMENT",
         "HARM_CATEGORY_HATE_SPEECH",
@@ -148,8 +148,8 @@ safety_settings = [
     ]
 ]
 
-# پیکربندی نهایی تولید محتوا بدون محدودیت
-generation_config = types.GenerateContentConfig(
-    response_modalities=['Text', 'Image'],
-    safety_settings=safety_settings
-)
+generation_config = {
+    "response_modalities": ["Text", "Image"],
+    "safety_settings": safety_settings,
+}
+
