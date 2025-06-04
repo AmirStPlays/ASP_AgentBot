@@ -12,7 +12,7 @@ keep_alive()
 
 # Init args
 parser = argparse.ArgumentParser()
-TG_TOKEN_PROVIDED = "8030885133:AAFEDd8BiJgRC7v7Mkze8DIK9bRbRKYfRDs" 
+TG_TOKEN_PROVIDED = "8048656293:AAHlZUYeR0Iv4rtZ0cAPvWq6vwBgZmq8XUE" 
 
 class Options:
     def __init__(self, tg_token):
