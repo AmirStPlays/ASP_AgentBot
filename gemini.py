@@ -30,7 +30,7 @@ async def load_user_chats_async():
                 pass
         except Exception as e:
             print(f"Error loading user chats from file (not implemented for Chat objects): {e}")
-            user_chats = {}   
+            user_chats = {}
 async def save_user_chats():
 
     print("save_user_chats called. (Note: True persistence of genai.Chat objects is not implemented here).")
@@ -178,15 +178,11 @@ async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str)
 
 async def gemini_draw(bot: TeleBot, message: Message, m: str):
     client = get_random_client()
-    user_id_str = str(message.from_user.id)
-    chat = user_chats.get(user_id_str)
-
-    if not chat:
-        chat = client.aio.chats.create(model=model_3, config=generation_config)
-        user_chats[user_id_str] = chat
+    image_generation_chat = client.aio.chats.create(model=model_3, config=generation_config)
 
     try:
-        response = await chat.send_message(m)
+        # Send the image prompt 'm' using the dedicated image generation chat session
+        response = await image_generation_chat.send_message(m)
     except Exception as e:
         traceback.print_exc()
         await bot.send_message(message.chat.id, f"{error_info}\nخطا در هنگام تولید تصویر: {str(e)}")
