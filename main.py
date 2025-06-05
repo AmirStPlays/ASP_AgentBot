@@ -2,17 +2,17 @@ import argparse
 import traceback
 import asyncio
 import re
-import telebot 
+import telebot
 from telebot.async_telebot import AsyncTeleBot
 import handlers
-import gemini 
-from config import conf 
+import gemini
+from config import conf
 from keep_alive import keep_alive
 keep_alive()
 
 # Init args
 parser = argparse.ArgumentParser()
-TG_TOKEN_PROVIDED = "8048656293:AAHlZUYeR0Iv4rtZ0cAPvWq6vwBgZmq8XUE" 
+TG_TOKEN_PROVIDED = "8048656293:AAHlZUYeR0Iv4rtZ0cAPvWq6vwBgZmq8XUE"
 
 class Options:
     def __init__(self, tg_token):
@@ -39,7 +39,7 @@ async def main():
 
     # Command handlers (should have pre_command_checks if they interact with Gemini or need auth)
     bot.register_message_handler(handlers.start,                         commands=['start'],         pass_bot=True)
-    bot.register_message_handler(handlers.draw_handler,                  commands=['img'],           pass_bot=True) 
+    bot.register_message_handler(handlers.draw_handler,                  commands=['img'],           pass_bot=True)
     bot.register_message_handler(handlers.gemini_edit_handler,           commands=['edit'],          pass_bot=True)
     bot.register_message_handler(handlers.clear,                         commands=['clear'],         pass_bot=True)
     bot.register_message_handler(handlers.switch,                        commands=['switch'],        pass_bot=True)
@@ -59,13 +59,10 @@ async def main():
     # Private text handler (for non-command messages in private chat)
     bot.register_message_handler(
         handlers.gemini_private_handler,
-        func=lambda message: message.chat.type == "private" and message.text and not message.text.startswith('/'), 
+        func=lambda message: message.chat.type == "private" and message.text and not message.text.startswith('/'),
         content_types=['text'],
         pass_bot=True)
 
-    # Contact handler (for phone sharing in PV)
-    bot.register_message_handler(handlers.handle_contact, content_types=['contact'], pass_bot=True)
-    
     # Callback query handler (for inline buttons)
     bot.register_callback_query_handler(handlers.handle_callback_query, func=lambda call: True, pass_bot=True)
 
