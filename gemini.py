@@ -60,7 +60,8 @@ GEMINI_API_KEYS = [
 "AIzaSyCf5kmryeqRICx0zZLhU6o40O9cbQCCjfQ",
 "AIzaSyBOIXuEQl9WgW5apBINjoCtXvLm8WZ_xnA",
 "AIzaSyA6p0iVHt4M9THM08kaOfLdglV-aCMq4s4",
-"AIzaSyB9FY6yLciPeX_0YT2nnGDiofYGgogWnoU"
+"AIzaSyB9FY6yLciPeX_0YT2nnGDiofYGgogWnoU",
+"AIzaSyD1N8dq3OWxDAneneGv7M2C2qHcQW-Jukk"
 ]
 
 def get_random_client():
