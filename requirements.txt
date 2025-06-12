@@ -7,3 +7,4 @@ md2tgmd==0.1.6
 aiohttp==3.9.5
 flask
 aiofiles
+gunicorn
