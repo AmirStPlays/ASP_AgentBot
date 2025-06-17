@@ -26,8 +26,7 @@ download_pic_notify = conf["download_pic_notify"]
 default_system_prompt = conf.get("default_system_prompt", "").strip()
 default_image_processing_prompt = conf.get("default_image_processing_prompt", "")
 
-
-search_tool = {"google_search": {}}
+search_tool = {"code_executor": {}}
 MODELS_WITH_SEARCH = {conf["model_1"]}
 
 
