@@ -7,13 +7,15 @@ import argparse
 import traceback
 import handlers
 import gemini
+import os
+from dotenv import load_dotenv
 from config import conf
 
 app = Flask(__name__)
-
+load_dotenv()
 @app.route('/')
 def home():
-    return "OK - bot is alive ✅"
+    return "bot is alive ✅"
 
 # Flask server runner
 def run_flask():
@@ -21,7 +23,7 @@ def run_flask():
 
 # Init args
 parser = argparse.ArgumentParser()
-TG_TOKEN_PROVIDED = "8048656293:AAHlZUYeR0Iv4rtZ0cAPvWq6vwBgZmq8XUE"
+TG_TOKEN_PROVIDED = os.environ.get("tg_token")
 
 class Options:
     def __init__(self, tg_token):
@@ -30,6 +32,7 @@ class Options:
 options = Options(TG_TOKEN_PROVIDED)
 
 async def run_bot():
+    handlers.clear_updates(TG_TOKEN_PROVIDED) # --> delete every other getUpadates first
     await gemini.load_user_chats_async()
     bot = AsyncTeleBot(options.tg_token)
 
