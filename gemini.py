@@ -27,8 +27,8 @@ default_system_prompt = conf.get("default_system_prompt", "").strip()
 default_image_processing_prompt = conf.get("default_image_processing_prompt", "")
 
 
-search_tool = {"google_search_retrieval": {}}
-MODELS_WITH_SEARCH = {conf["model_2"]}
+search_tool = {"google_search": {}}
+MODELS_WITH_SEARCH = {conf["model_1"]}
 
 
 load_dotenv()
