@@ -9,6 +9,7 @@ from telebot import TeleBot
 from config import conf, safety_settings, generation_config
 from datetime import datetime, timezone, timedelta
 import google.generativeai as genai
+from google.generativeai.types import Tool, FunctionDeclaration
 from google import genai as genai1
 import os
 from dotenv import load_dotenv
@@ -26,7 +27,13 @@ download_pic_notify = conf["download_pic_notify"]
 default_system_prompt = conf.get("default_system_prompt", "").strip()
 default_image_processing_prompt = conf.get("default_image_processing_prompt", "")
 
-search_tool = {"code_executor": {}}
+search_tool = Tool(
+    function_declarations=[
+        FunctionDeclaration(
+            name="google_search"
+        )
+    ]
+)
 MODELS_WITH_SEARCH = {conf["model_1"]}
 
 
