@@ -30,7 +30,8 @@ default_image_processing_prompt = conf.get("default_image_processing_prompt", ""
 search_tool = Tool(
     function_declarations=[
         FunctionDeclaration(
-            name="google_search"
+            name="google_search",
+            description="Tool for searching the web to retrieve up-to-date information."
         )
     ]
 )
