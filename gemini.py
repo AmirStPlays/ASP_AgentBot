@@ -9,15 +9,13 @@ from telebot import TeleBot
 from config import conf, generation_config
 from datetime import datetime, timezone, timedelta
 from google import genai
-
 import json
 import os
-
+from dotenv import load_dotenv
 
 user_chats = {}  # user_id -> chat
-USER_CHATS_FILE = "user_chats_data.json" # Example file for potential future use
-
-
+USER_CHATS_FILE = "user_chats_data.json" 
+load_dotenv()
 
 async def load_user_chats_async():
     global user_chats
@@ -53,16 +51,7 @@ default_system_prompt = conf.get("default_system_prompt", "").strip()
 
 search_tool = {'google_search': {}}
 
-GEMINI_API_KEYS = [
-"AIzaSyAc2PYevmpUo_3PW5PMJpu491eg9EaqWqY",
-"AIzaSyCrSk31t3oLsK4uiDcZwo20cDGkxa8IuVg",
-"AIzaSyAE6JIR_tjXSWbXRTWvd1POKIOMkTzf5O8",
-"AIzaSyCf5kmryeqRICx0zZLhU6o40O9cbQCCjfQ",
-"AIzaSyBOIXuEQl9WgW5apBINjoCtXvLm8WZ_xnA",
-"AIzaSyA6p0iVHt4M9THM08kaOfLdglV-aCMq4s4",
-"AIzaSyB9FY6yLciPeX_0YT2nnGDiofYGgogWnoU",
-"AIzaSyD1N8dq3OWxDAneneGv7M2C2qHcQW-Jukk"
-]
+GEMINI_API_KEYS = os.getenv("gemini_api_keys", "").split(",") # ---> type(GEMINI_API_KEYS) = list
 
 def get_random_client():
     api_key = random.choice(GEMINI_API_KEYS)
