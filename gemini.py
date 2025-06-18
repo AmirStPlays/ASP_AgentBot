@@ -46,13 +46,19 @@ user_chats = {}
 USER_CHATS_FILE = "user_chats_data.json"
 
 
+
 def extract_part_text(part):
-    try:
-        if hasattr(part, "text") and part.text:
-            return part.text
-    except ValueError:
-        return None
-    return None
+    if hasattr(part, 'function_call') and part.function_call:
+        func_call = part.function_call
+    
+        return f"🔎 در حال جستجو در گوگل برای: `{json.dumps(func_call.args, ensure_ascii=False)}`\n"
+
+
+    if hasattr(part, 'text') and part.text:
+        return part.text
+
+    
+    return ""
 
 
 
