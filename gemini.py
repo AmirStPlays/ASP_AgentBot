@@ -45,6 +45,18 @@ GEMINI_API_KEYS = os.getenv("gemini_api_keys", "").split(",")
 user_chats = {}
 USER_CHATS_FILE = "user_chats_data.json"
 
+
+def extract_part_text(part):
+    if hasattr(part, 'text') and part.text:
+        return part.text
+    elif hasattr(part, 'function_call'):
+        func_call = part.function_call
+        return f"[📞 Function Call]: `{func_call.name}`\n{json.dumps(func_call.args, ensure_ascii=False, indent=2)}"
+    elif hasattr(part, 'inline_data'):
+        return "[🖼️ Image or Inline Data]"
+    return "[❓ Unknown Part]"
+
+
 def get_random_client():
     api_key = random.choice(GEMINI_API_KEYS)
     return genai1.Client(api_key=api_key)
@@ -88,120 +100,113 @@ def _convert_chat_history_to_dicts(chat_session):
 
 async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str):
     random_configure()
-    sent_message = None
     user_id_str = str(message.from_user.id)
+    sent_message = None
 
     try:
         if user_id_str not in user_chats:
             user_chats[user_id_str] = {"history": []}
-        
+
         history_dicts = user_chats[user_id_str].get("history", [])
 
         if not history_dicts and default_system_prompt:
-            try:
-                time_zone = timezone(timedelta(hours=3, minutes=30))
-                date = datetime.now(time_zone).strftime("%d/%m/%Y")
-                timenow = datetime.now(time_zone).strftime("%H:%M:%S")
-                time_prompt = f"**اطلاعات تاریخ و زمان:**\nتاریخ: {date}\nزمان: {timenow}"
-                full_prompt = default_system_prompt + "\n\n" + time_prompt
-                
-                history_dicts.append({"role": "user", "parts": [{"text": full_prompt}]})
-                history_dicts.append({"role": "model", "parts": [{"text": "باشه، متوجه شدم."}]})
-                print(f"Default prompt added for user {user_id_str}")
-            except Exception as e:
-                print(f"Warning failed to add default prompt: {e}")
+            now = datetime.now(timezone(timedelta(hours=3, minutes=30)))
+            time_prompt = f"**اطلاعات تاریخ و زمان:**\nتاریخ: {now:%d/%m/%Y}\nزمان: {now:%H:%M:%S}"
+            full_prompt = f"{default_system_prompt}\n\n{time_prompt}"
+            history_dicts.extend([
+                {"role": "user", "parts": [{"text": full_prompt}]},
+                {"role": "model", "parts": [{"text": "باشه، متوجه شدم."}]}
+            ])
 
         model = genai.GenerativeModel(model_type, tools=[search_tool] if model_type in MODELS_WITH_SEARCH else None)
         chat = model.start_chat(history=history_dicts)
-        
+
         sent_message = await bot.reply_to(message, before_generate_info)
         response = await chat.send_message_async(m, stream=True, safety_settings=safety_settings)
 
         full_response = ""
         last_update = time.time()
-        update_interval = conf["streaming_update_interval"]
-        
-
 
         async for chunk in response:
-
-            if hasattr(chunk, 'text') and chunk.text:
-                full_response += chunk.text
-                current_time = time.time()
-                if current_time - last_update >= update_interval:
+            chunk_text = extract_part_text(chunk)
+            if chunk_text:
+                full_response += chunk_text
+                if time.time() - last_update >= conf["streaming_update_interval"]:
                     try:
                         await bot.edit_message_text(escape(full_response + "✍️"), chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
                     except Exception as e:
                         if "message is not modified" not in str(e).lower():
-                             await bot.edit_message_text(full_response + "✍️", chat_id=sent_message.chat.id, message_id=sent_message.message_id)
+                            await bot.edit_message_text(full_response + "✍️", chat_id=sent_message.chat.id, message_id=sent_message.message_id)
+                    last_update = time.time()
 
         await bot.edit_message_text(escape(full_response), chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
-        
         user_chats[user_id_str]["history"] = _convert_chat_history_to_dicts(chat)
         asyncio.create_task(save_user_chats())
 
     except Exception as e:
         traceback.print_exc()
-        error_message_detail = f"{error_info}\nجزئیات خطا: {str(e)}"
+        msg = f"{error_info}\nجزئیات خطا: {str(e)}"
         if sent_message:
-            await bot.edit_message_text(error_message_detail, chat_id=sent_message.chat.id, message_id=sent_message.message_id)
+            await bot.edit_message_text(msg, chat_id=sent_message.chat.id, message_id=sent_message.message_id)
         else:
-            await bot.reply_to(message, error_message_detail)
+            await bot.reply_to(message, msg)
+
 
 
 async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, photo_file: bytes, model_type: str, status_message: Message = None):
     random_configure()
     user_id_str = str(message.from_user.id)
     sent_message = status_message
-    
+
     try:
         image = Image.open(io.BytesIO(photo_file))
-        
+
         if user_id_str not in user_chats:
             user_chats[user_id_str] = {"history": []}
-        
+
         history_dicts = user_chats[user_id_str].get("history", [])
 
         if not history_dicts and default_image_processing_prompt:
-             history_dicts.append({"role": "user", "parts": [{"text": default_image_processing_prompt}]})
-             history_dicts.append({"role": "model", "parts": [{"text": "باشه، متوجه شدم. از این به بعد تصاویر را با توجه به این دستورالعمل پردازش می‌کنم."}]})
+            history_dicts.extend([
+                {"role": "user", "parts": [{"text": default_image_processing_prompt}]},
+                {"role": "model", "parts": [{"text": "باشه، متوجه شدم. از این به بعد تصاویر را با توجه به این دستورالعمل پردازش می‌کنم."}]}
+            ])
 
         model = genai.GenerativeModel(model_type, tools=[search_tool] if model_type in MODELS_WITH_SEARCH else None)
         chat = model.start_chat(history=history_dicts)
-        
+
         if not sent_message:
             sent_message = await bot.reply_to(message, before_generate_info)
-        
+
         response = await chat.send_message_async([m, image], stream=True, safety_settings=safety_settings)
 
         full_response = ""
         last_update = time.time()
-        update_interval = conf["streaming_update_interval"]
-        
 
         async for chunk in response:
-            if hasattr(chunk, 'text') and chunk.text:
-                full_response += chunk.text
-                current_time = time.time()
-                if current_time - last_update >= update_interval:
+            chunk_text = extract_part_text(chunk)
+            if chunk_text:
+                full_response += chunk_text
+                if time.time() - last_update >= conf["streaming_update_interval"]:
                     try:
                         await bot.edit_message_text(escape(full_response + "✍️"), chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
                     except Exception as e:
                         if "message is not modified" not in str(e).lower():
                             await bot.edit_message_text(full_response + "✍️", chat_id=sent_message.chat.id, message_id=sent_message.message_id)
+                    last_update = time.time()
 
         await bot.edit_message_text(escape(full_response), chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
-        
         user_chats[user_id_str]["history"] = _convert_chat_history_to_dicts(chat)
         asyncio.create_task(save_user_chats())
 
     except Exception as e:
         traceback.print_exc()
-        error_message_detail = f"{error_info}\nجزئیات خطا: {str(e)}"
+        msg = f"{error_info}\nجزئیات خطا: {str(e)}"
         if sent_message:
-            await bot.edit_message_text(error_message_detail, chat_id=sent_message.chat.id, message_id=sent_message.message_id)
+            await bot.edit_message_text(msg, chat_id=sent_message.chat.id, message_id=sent_message.message_id)
         else:
-            await bot.reply_to(message, error_message_detail)
+            await bot.reply_to(message, msg)
+
 
 
 async def gemini_draw(bot: TeleBot, message: Message, m: str):
