@@ -47,14 +47,13 @@ USER_CHATS_FILE = "user_chats_data.json"
 
 
 def extract_part_text(part):
-    if hasattr(part, 'text') and part.text:
-        return part.text
-    elif hasattr(part, 'function_call'):
-        func_call = part.function_call
-        return f"[📞 Function Call]: `{func_call.name}`\n{json.dumps(func_call.args, ensure_ascii=False, indent=2)}"
-    elif hasattr(part, 'inline_data'):
-        return "[🖼️ Image or Inline Data]"
-    return "[❓ Unknown Part]"
+    try:
+        if hasattr(part, "text") and part.text:
+            return part.text
+    except ValueError:
+        return None
+    return None
+
 
 
 def get_random_client():
@@ -100,23 +99,24 @@ def _convert_chat_history_to_dicts(chat_session):
 
 async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str):
     random_configure()
-    user_id_str = str(message.from_user.id)
     sent_message = None
+    user_id_str = str(message.from_user.id)
 
     try:
         if user_id_str not in user_chats:
             user_chats[user_id_str] = {"history": []}
-
+        
         history_dicts = user_chats[user_id_str].get("history", [])
 
         if not history_dicts and default_system_prompt:
-            now = datetime.now(timezone(timedelta(hours=3, minutes=30)))
-            time_prompt = f"**اطلاعات تاریخ و زمان:**\nتاریخ: {now:%d/%m/%Y}\nزمان: {now:%H:%M:%S}"
-            full_prompt = f"{default_system_prompt}\n\n{time_prompt}"
-            history_dicts.extend([
-                {"role": "user", "parts": [{"text": full_prompt}]},
-                {"role": "model", "parts": [{"text": "باشه، متوجه شدم."}]}
-            ])
+            time_zone = timezone(timedelta(hours=3, minutes=30))
+            date = datetime.now(time_zone).strftime("%d/%m/%Y")
+            timenow = datetime.now(time_zone).strftime("%H:%M:%S")
+            time_prompt = f"**اطلاعات تاریخ و زمان:**\nتاریخ: {date}\nزمان: {timenow}"
+            full_prompt = default_system_prompt + "\n\n" + time_prompt
+
+            history_dicts.append({"role": "user", "parts": [{"text": full_prompt}]})
+            history_dicts.append({"role": "model", "parts": [{"text": "باشه، متوجه شدم."}]})
 
         model = genai.GenerativeModel(model_type, tools=[search_tool] if model_type in MODELS_WITH_SEARCH else None)
         chat = model.start_chat(history=history_dicts)
@@ -126,18 +126,18 @@ async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str)
 
         full_response = ""
         last_update = time.time()
+        update_interval = conf["streaming_update_interval"]
 
         async for chunk in response:
             chunk_text = extract_part_text(chunk)
             if chunk_text:
                 full_response += chunk_text
-                if time.time() - last_update >= conf["streaming_update_interval"]:
+                if time.time() - last_update >= update_interval:
                     try:
                         await bot.edit_message_text(escape(full_response + "✍️"), chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
                     except Exception as e:
                         if "message is not modified" not in str(e).lower():
                             await bot.edit_message_text(full_response + "✍️", chat_id=sent_message.chat.id, message_id=sent_message.message_id)
-                    last_update = time.time()
 
         await bot.edit_message_text(escape(full_response), chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
         user_chats[user_id_str]["history"] = _convert_chat_history_to_dicts(chat)
@@ -145,12 +145,11 @@ async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str)
 
     except Exception as e:
         traceback.print_exc()
-        msg = f"{error_info}\nجزئیات خطا: {str(e)}"
+        error_message_detail = f"{error_info}\nجزئیات خطا: {str(e)}"
         if sent_message:
-            await bot.edit_message_text(msg, chat_id=sent_message.chat.id, message_id=sent_message.message_id)
+            await bot.edit_message_text(error_message_detail, chat_id=sent_message.chat.id, message_id=sent_message.message_id)
         else:
-            await bot.reply_to(message, msg)
-
+            await bot.reply_to(message, error_message_detail)
 
 
 async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, photo_file: bytes, model_type: str, status_message: Message = None):
@@ -167,10 +166,8 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
         history_dicts = user_chats[user_id_str].get("history", [])
 
         if not history_dicts and default_image_processing_prompt:
-            history_dicts.extend([
-                {"role": "user", "parts": [{"text": default_image_processing_prompt}]},
-                {"role": "model", "parts": [{"text": "باشه، متوجه شدم. از این به بعد تصاویر را با توجه به این دستورالعمل پردازش می‌کنم."}]}
-            ])
+            history_dicts.append({"role": "user", "parts": [{"text": default_image_processing_prompt}]})
+            history_dicts.append({"role": "model", "parts": [{"text": "باشه، متوجه شدم. از این به بعد تصاویر را با توجه به این دستورالعمل پردازش می‌کنم."}]})
 
         model = genai.GenerativeModel(model_type, tools=[search_tool] if model_type in MODELS_WITH_SEARCH else None)
         chat = model.start_chat(history=history_dicts)
@@ -182,18 +179,18 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
 
         full_response = ""
         last_update = time.time()
+        update_interval = conf["streaming_update_interval"]
 
         async for chunk in response:
             chunk_text = extract_part_text(chunk)
             if chunk_text:
                 full_response += chunk_text
-                if time.time() - last_update >= conf["streaming_update_interval"]:
+                if time.time() - last_update >= update_interval:
                     try:
                         await bot.edit_message_text(escape(full_response + "✍️"), chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
                     except Exception as e:
                         if "message is not modified" not in str(e).lower():
                             await bot.edit_message_text(full_response + "✍️", chat_id=sent_message.chat.id, message_id=sent_message.message_id)
-                    last_update = time.time()
 
         await bot.edit_message_text(escape(full_response), chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
         user_chats[user_id_str]["history"] = _convert_chat_history_to_dicts(chat)
@@ -201,12 +198,11 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
 
     except Exception as e:
         traceback.print_exc()
-        msg = f"{error_info}\nجزئیات خطا: {str(e)}"
+        error_message_detail = f"{error_info}\nجزئیات خطا: {str(e)}"
         if sent_message:
-            await bot.edit_message_text(msg, chat_id=sent_message.chat.id, message_id=sent_message.message_id)
+            await bot.edit_message_text(error_message_detail, chat_id=sent_message.chat.id, message_id=sent_message.message_id)
         else:
-            await bot.reply_to(message, msg)
-
+            await bot.reply_to(message, error_message_detail)
 
 
 async def gemini_draw(bot: TeleBot, message: Message, m: str):
