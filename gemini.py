@@ -16,7 +16,6 @@ import json
 import aiofiles
 import asyncio
 
-
 model_1 = conf["model_1"]
 model_2 = conf["model_2"]
 model_3 = conf["model_3"]
@@ -45,20 +44,9 @@ def random_configure():
 
 def _initialize_user(user_id_str):
     if user_id_str not in user_chats:
-        user_chats[user_id_str] = {
-            "history": [],
-            "stats": {
-                "messages": 0,
-                "generated_images": 0,
-                "edited_images": 0,
-            }
-        }
+        user_chats[user_id_str] = {"history": [], "stats": {"messages": 0, "generated_images": 0, "edited_images": 0,}}
     elif "stats" not in user_chats[user_id_str]:
-        user_chats[user_id_str]["stats"] = {
-            "messages": 0,
-            "generated_images": 0,
-            "edited_images": 0,
-        }
+        user_chats[user_id_str]["stats"] = {"messages": 0, "generated_images": 0, "edited_images": 0,}
     if "history" not in user_chats[user_id_str]:
         user_chats[user_id_str]["history"] = []
 
@@ -90,7 +78,6 @@ def _convert_chat_history_to_dicts(chat_session):
         is_tool_related = any(hasattr(p, 'function_call') or hasattr(p, 'function_response') for p in content.parts)
         if is_tool_related:
             continue
-
         if content.parts and all(hasattr(p, 'text') for p in content.parts):
              role = content.role if content.role else "model"
              parts = [{"text": part.text} for part in content.parts if hasattr(part, 'text')]
@@ -109,8 +96,7 @@ async def daily_reset_stats():
         await asyncio.sleep(seconds_until_midnight)
         print("Performing daily stat reset...")
         async with _save_lock:
-            users_to_reset = list(user_chats.keys())
-            for user_id in users_to_reset:
+            for user_id in user_chats:
                 if "stats" in user_chats.get(user_id, {}):
                     user_chats[user_id]["stats"]["generated_images"] = 0
                     user_chats[user_id]["stats"]["edited_images"] = 0
@@ -150,29 +136,32 @@ async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str)
         
         tools_to_use = _get_tools_for_model(model_type)
         model = genai.GenerativeModel(model_name=model_type, tools=tools_to_use)
-        chat = model.start_chat(history=history_dicts, enable_automatic_function_calling=True)
+        chat = model.start_chat(history=history_dicts, enable_automatic_function_calling=bool(tools_to_use))
         
         sent_message = await bot.reply_to(message, before_generate_info)
-        response = await chat.send_message_async(m, stream=True, safety_settings=safety_settings)
 
-        full_response = ""
-        last_update = time.time()
-        update_interval = conf["streaming_update_interval"]
-        
-        async for chunk in response:
-            if hasattr(chunk, 'text') and chunk.text:
-                full_response += chunk.text
-                current_time = time.time()
-                if current_time - last_update >= update_interval:
-                    try:
-                        await bot.edit_message_text(escape(full_response + "✍️"), chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
-                    except Exception as e:
-                        if "message is not modified" not in str(e).lower():
-                             await bot.edit_message_text(full_response + "✍️", chat_id=sent_message.chat.id, message_id=sent_message.message_id)
-                    last_update = current_time
-
-        final_text = escape(full_response) if full_response else "پاسخی دریافت نشد."
-        await bot.edit_message_text(final_text, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
+        if tools_to_use:
+            response = await chat.send_message_async(m, stream=False, safety_settings=safety_settings)
+            final_text = escape(response.text) if hasattr(response, 'text') and response.text else "پاسخی دریافت نشد."
+            await bot.edit_message_text(final_text, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
+        else:
+            response = await chat.send_message_async(m, stream=True, safety_settings=safety_settings)
+            full_response = ""
+            last_update = time.time()
+            update_interval = conf["streaming_update_interval"]
+            async for chunk in response:
+                if hasattr(chunk, 'text') and chunk.text:
+                    full_response += chunk.text
+                    current_time = time.time()
+                    if current_time - last_update >= update_interval:
+                        try:
+                            await bot.edit_message_text(escape(full_response + "✍️"), chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
+                        except Exception as e:
+                            if "message is not modified" not in str(e).lower():
+                                 await bot.edit_message_text(full_response + "✍️", chat_id=sent_message.chat.id, message_id=sent_message.message_id)
+                        last_update = current_time
+            final_text = escape(full_response) if full_response else "پاسخی دریافت نشد."
+            await bot.edit_message_text(final_text, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
         
         user_chats[user_id_str]["stats"]["messages"] += 1
         user_chats[user_id_str]["history"] = _convert_chat_history_to_dicts(chat)
@@ -181,8 +170,6 @@ async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str)
     except Exception as e:
         traceback.print_exc()
         error_message_detail = f"{error_info}\nجزئیات خطا: {str(e)}"
-        if "google.generativeai' has no attribute 'Tool" in str(e):
-             error_message_detail += "\n\n⚠️ **نسخه کتابخانه گوگل شما قدیمی است.** لطفا `google-generativeai` را در `requirements.txt` آپدیت کنید."
         if sent_message:
             await bot.edit_message_text(error_message_detail, chat_id=sent_message.chat.id, message_id=sent_message.message_id)
         else:
@@ -206,23 +193,27 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
 
         if not sent_message:
             sent_message = await bot.reply_to(message, before_generate_info)
-        response = await model.generate_content_async(chat_contents, stream=True, safety_settings=safety_settings)
-
-        full_response = ""
-        last_update = time.time()
-        update_interval = conf["streaming_update_interval"]
         
-        async for chunk in response:
-            if hasattr(chunk, 'text') and chunk.text:
-                full_response += chunk.text
-                current_time = time.time()
-                if current_time - last_update >= update_interval:
-                    try:
-                        await bot.edit_message_text(escape(full_response + "✍️"), chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
-                    except Exception as e:
-                        if "message is not modified" not in str(e).lower():
-                            await bot.edit_message_text(full_response + "✍️", chat_id=sent_message.chat.id, message_id=sent_message.message_id)
-                    last_update = current_time
+        stream_enabled = not bool(tools_to_use)
+        response = await model.generate_content_async(chat_contents, stream=stream_enabled, safety_settings=safety_settings)
+
+        if stream_enabled:
+            full_response = ""
+            last_update = time.time()
+            update_interval = conf["streaming_update_interval"]
+            async for chunk in response:
+                if hasattr(chunk, 'text') and chunk.text:
+                    full_response += chunk.text
+                    current_time = time.time()
+                    if current_time - last_update >= update_interval:
+                        try:
+                            await bot.edit_message_text(escape(full_response + "✍️"), chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
+                        except Exception as e:
+                            if "message is not modified" not in str(e).lower():
+                                await bot.edit_message_text(full_response + "✍️", chat_id=sent_message.chat.id, message_id=sent_message.message_id)
+                        last_update = current_time
+        else:
+            full_response = response.text
 
         final_text = escape(full_response) if full_response else "پاسخی دریافت نشد."
         await bot.edit_message_text(final_text, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
@@ -241,20 +232,15 @@ async def gemini_process_voice(bot: TeleBot, message: Message, voice_file: bytes
     random_configure()
     user_id_str = str(message.from_user.id)
     _initialize_user(user_id_str)
-
     sent_message = None
     try:
         sent_message = await bot.reply_to(message, "در حال پردازش پیام صوتی... 🎤")
-        
-        prompt = "این پیام صوتی را به دقت به متن تبدیل کن. اگر محتوای آن سوالی بود، به سوال پاسخ بده و اگر دستوری بود آن را اجرا کن."
+        prompt = "این پیام صوتی را به دقت به متن تبدیل کن و سپس به محتوای آن به طور کامل پاسخ بده."
         model = genai.GenerativeModel(model_name=model_type)
-        
         response = await model.generate_content_async([prompt, {"mime_type": "audio/ogg", "data": voice_file}], stream=True, safety_settings=safety_settings)
-
         full_response = ""
         last_update = time.time()
         update_interval = conf["streaming_update_interval"]
-        
         async for chunk in response:
             if hasattr(chunk, 'text') and chunk.text:
                 full_response += chunk.text
@@ -266,13 +252,10 @@ async def gemini_process_voice(bot: TeleBot, message: Message, voice_file: bytes
                         if "message is not modified" not in str(e).lower():
                             await bot.edit_message_text(full_response + "✍️", chat_id=sent_message.chat.id, message_id=sent_message.message_id)
                     last_update = current_time
-        
         final_text = escape(full_response) if full_response else "پاسخی برای این پیام صوتی دریافت نشد."
         await bot.edit_message_text(final_text, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
-        
         user_chats[user_id_str]["stats"]["messages"] += 1
         asyncio.create_task(save_user_chats())
-
     except Exception as e:
         traceback.print_exc()
         error_message_detail = f"{error_info}\nجزئیات خطا: {str(e)}"
@@ -283,69 +266,85 @@ async def gemini_process_voice(bot: TeleBot, message: Message, voice_file: bytes
 
 async def gemini_draw(bot: TeleBot, message: Message, m: str):
     client = get_random_client()
-    user_id_str = str(message.from_user.id)
-    _initialize_user(user_id_str)
-    
+    image_generation_chat = client.aio.chats.create(model=model_3, config=generation_config)
+
     try:
-        response = await client.aio.models.generate_content(model=model_3, contents=m, generation_config=generation_config)
+        response = await image_generation_chat.send_message(m)
     except Exception as e:
         traceback.print_exc()
-        await bot.send_message(message.chat.id, f"{error_info}\nخطا: {str(e)}")
+        await bot.send_message(message.chat.id, f"{error_info}\nخطا در هنگام تولید تصویر: {str(e)}")
         return
 
-    if not (response and hasattr(response, 'candidates') and response.candidates and hasattr(response.candidates[0], 'content') and hasattr(response.candidates[0].content, 'parts')):
-        await bot.send_message(message.chat.id, f"{error_info}\nپاسخ معتبری دریافت نشد.")
+    if not (response and hasattr(response, 'candidates') and response.candidates and \
+       hasattr(response.candidates[0], 'content') and hasattr(response.candidates[0].content, 'parts')):
+        await bot.send_message(message.chat.id, f"{error_info}\nپاسخ معتبری هنگام ترسیم تصویر دریافت نشد.")
+        await bot.send_message(message.chat.id, f"احتمال زیاد مشکل از متنته.\nاحتمالا یکم sus بوده.🤭")
         return
 
-    image_sent = False
+    processed_parts = False
     for part in response.candidates[0].content.parts:
         if hasattr(part, 'text') and part.text is not None:
             text = part.text
-            await bot.send_message(message.chat.id, escape(text), parse_mode="MarkdownV2")
+            while len(text) > 4000:
+                await bot.send_message(message.chat.id, escape(text[:4000]), parse_mode="MarkdownV2")
+                text = text[4000:]
+            if text:
+                await bot.send_message(message.chat.id, escape(text), parse_mode="MarkdownV2")
+            processed_parts = True
         elif hasattr(part, 'inline_data') and part.inline_data is not None and hasattr(part.inline_data, 'data'):
             photo_data = part.inline_data.data
             await bot.send_photo(message.chat.id, photo_data, caption=escape(f"تصویر تولید شده برای: {m[:100]}"))
-            image_sent = True
+            processed_parts = True
 
-    if image_sent:
-        user_chats[user_id_str]["stats"]["generated_images"] += 1
-        asyncio.create_task(save_user_chats())
-    elif not any(hasattr(p, 'text') and p.text for p in response.candidates[0].content.parts):
+    if not processed_parts:
         await bot.send_message(message.chat.id, "تصویری تولید نشد یا محتوای قابل نمایشی وجود نداشت.")
+
 
 async def gemini_edit(bot: TeleBot, message: Message, m: str, photo_file: bytes):
     image = Image.open(io.BytesIO(photo_file))
     client = get_random_client()
     user_id_str = str(message.from_user.id)
-    _initialize_user(user_id_str)
-    
+    chat = user_chats.get(user_id_str)
+
+    if not chat:
+        chat = client.aio.chats.create(model=model_3, config=generation_config)
+        user_chats[user_id_str] = chat
+
     sent_progress_message = None
     try:
         sent_progress_message = await bot.reply_to(message, "در حال پردازش تصویر با دستور شما... 🖼️")
-        response = await client.aio.models.generate_content(model=model_3, contents=[m, image], generation_config=generation_config)
+
+        response = await client.aio.models.generate_content(
+            model=model_3,
+            contents=[m, image],
+            config=generation_config
+        )
 
         if sent_progress_message:
             await bot.delete_message(sent_progress_message.chat.id, sent_progress_message.message_id)
 
-        if not (response and hasattr(response, 'candidates') and response.candidates and hasattr(response.candidates[0], 'content') and hasattr(response.candidates[0].content, 'parts')):
-            await bot.send_message(message.chat.id, f"{error_info}\nپاسخ معتبری دریافت نشد.")
+        if not (response and hasattr(response, 'candidates') and response.candidates and \
+           hasattr(response.candidates[0], 'content') and hasattr(response.candidates[0].content, 'parts')):
+            await bot.send_message(message.chat.id, f"{error_info}\nپاسخ معتبری از سرویس دریافت نشد.")
             return
 
-        image_sent = False
+        processed_parts = False
         for part in response.candidates[0].content.parts:
             if hasattr(part, 'text') and part.text is not None:
                 text_response = part.text
-                await bot.send_message(message.chat.id, escape(text_response), parse_mode="MarkdownV2")
+                while len(text_response) > 4000:
+                    await bot.send_message(message.chat.id, escape(text_response[:4000]), parse_mode="MarkdownV2")
+                    text_response = text_response[4000:]
+                if text_response:
+                    await bot.send_message(message.chat.id, escape(text_response), parse_mode="MarkdownV2")
+                processed_parts = True
             elif hasattr(part, 'inline_data') and part.inline_data is not None and hasattr(part.inline_data, 'data'):
                 photo = part.inline_data.data
-                await bot.send_photo(message.chat.id, photo, caption=escape("نتیجه ویرایش تصویر:"))
-                image_sent = True
+                await bot.send_photo(message.chat.id, photo, caption=escape("نتیجه ویرایش تصویر:") if not m.startswith("تصویر را توصیف کن") else escape(m))
+                processed_parts = True
 
-        if image_sent:
-            user_chats[user_id_str]["stats"]["edited_images"] += 1
-            asyncio.create_task(save_user_chats())
-        elif not any(hasattr(p, 'text') and p.text for p in response.candidates[0].content.parts):
-            await bot.send_message(message.chat.id, "پاسخی دریافت نشد.")
+        if not processed_parts:
+            await bot.send_message(message.chat.id, "پاسخی از مدل دریافت نشد یا محتوای قابل نمایشی وجود نداشت.")
 
     except Exception as e:
         traceback.print_exc()
