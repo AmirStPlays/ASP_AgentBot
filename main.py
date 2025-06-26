@@ -17,11 +17,9 @@ load_dotenv()
 def home():
     return "bot is alive ✅"
 
-# Flask server runner
 def run_flask():
     app.run(host='0.0.0.0', port=8080)
 
-# Init args
 parser = argparse.ArgumentParser()
 TG_TOKEN_PROVIDED = os.environ.get("tg_token")
 
@@ -48,7 +46,6 @@ async def run_bot():
         telebot.types.BotCommand("info", "نمایش آمار استفاده کاربر"),
     ])
 
-    # Register handlers
     bot.register_message_handler(handlers.start, commands=['start'], pass_bot=True)
     bot.register_message_handler(handlers.show_info, commands=['info'], pass_bot=True)
     bot.register_message_handler(handlers.draw_handler, commands=['img'], pass_bot=True)
@@ -56,17 +53,22 @@ async def run_bot():
     bot.register_message_handler(handlers.clear, commands=['clear'], pass_bot=True)
     bot.register_message_handler(handlers.switch, commands=['switch'], pass_bot=True)
     bot.register_message_handler(handlers.show_help, commands=['help'], pass_bot=True)
+    
     bot.register_message_handler(handlers.gemini_photo_handler, content_types=["photo"], pass_bot=True)
+    bot.register_message_handler(handlers.gemini_voice_handler, content_types=["voice"], pass_bot=True)
+
     bot.register_message_handler(
         handlers.gemini_group_text_handler,
         func=lambda m: m.chat.type != "private" and m.text and m.text.startswith('.'),
         content_types=["text"],
         pass_bot=True)
+    
     bot.register_message_handler(
         handlers.gemini_private_handler,
         func=lambda m: m.chat.type == "private" and m.text and not m.text.startswith('/'),
         content_types=["text"],
         pass_bot=True)
+        
     bot.register_callback_query_handler(handlers.handle_callback_query, func=lambda call: True, pass_bot=True)
 
     print("Starting Gemini_Telegram_Bot (Persian)...")
