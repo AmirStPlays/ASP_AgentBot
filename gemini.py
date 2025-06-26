@@ -31,7 +31,7 @@ default_image_processing_prompt = conf.get("default_image_processing_prompt", ""
 search_tool = {"google_search": {}}
 
 
-MODELS_WITH_SEARCH = {conf["model_2"]}
+MODELS_WITH_SEARCH = {conf["model_1"]}
 
 
 load_dotenv()
@@ -52,7 +52,6 @@ def random_configure():
     return genai.configure(api_key=api_key)
 
 def _initialize_user(user_id_str):
-    """Initializes a user's data structure if it doesn't exist."""
     if user_id_str not in user_chats:
         user_chats[user_id_str] = {
             "history": [],
@@ -68,12 +67,12 @@ def _initialize_user(user_id_str):
             "generated_images": 0,
             "edited_images": 0,
         }
+    if "history" not in user_chats[user_id_str]:
+        user_chats[user_id_str]["history"] = []
 
 
 async def save_user_chats():
-    """تاریخچه گفتگو و آمار را در فایل ذخیره می‌کند."""
     async with _save_lock:
-        print("Saving user chats to file...")
         try:
             async with aiofiles.open(USER_CHATS_FILE, "w", encoding="utf-8") as f:
                 await f.write(json.dumps(user_chats, ensure_ascii=False, indent=2))
@@ -81,7 +80,6 @@ async def save_user_chats():
             print(f"Error saving user chats to file: {e}")
 
 async def load_user_chats_async():
-    """تاریخچه گفتگو و آمار را از فایل بارگذاری می‌کند."""
     global user_chats
     user_chats = {}
     print("Initialized in-memory user_chats dictionary.")
@@ -96,15 +94,13 @@ async def load_user_chats_async():
             user_chats = {}
 
 def _convert_chat_history_to_dicts(chat_session):
-    """تاریخچه یک جلسه چت فعال را به لیست دیکشنری برای ذخیره‌سازی تبدیل می‌کند."""
     history_list = []
     for content in chat_session.history:
-        if content.parts and hasattr(content.parts[0], 'function_call'):
-            continue
-        role = content.role if content.role else "model"
-        parts = [{"text": part.text} for part in content.parts if hasattr(part, 'text')]
-        if parts:
-            history_list.append({"role": role, "parts": parts})
+        if content.parts and all(hasattr(p, 'text') for p in content.parts):
+             role = content.role if content.role else "model"
+             parts = [{"text": part.text} for part in content.parts if hasattr(part, 'text')]
+             if parts:
+                 history_list.append({"role": role, "parts": parts})
     return history_list
 
 
@@ -123,13 +119,14 @@ async def daily_reset_stats():
         await asyncio.sleep(seconds_until_midnight)
 
         print("Performing daily stat reset...")
-        users_to_reset = list(user_chats.keys())
-        for user_id in users_to_reset:
-            if "stats" in user_chats.get(user_id, {}):
-                user_chats[user_id]["stats"]["generated_images"] = 0
-                user_chats[user_id]["stats"]["edited_images"] = 0
-        
-        await save_user_chats()
+        async with _save_lock:
+            users_to_reset = list(user_chats.keys())
+            for user_id in users_to_reset:
+                if "stats" in user_chats.get(user_id, {}):
+                    user_chats[user_id]["stats"]["generated_images"] = 0
+                    user_chats[user_id]["stats"]["edited_images"] = 0
+            
+            await save_user_chats() 
         print("Daily stat reset complete.")
         await asyncio.sleep(1)
 
@@ -168,7 +165,6 @@ async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str)
         update_interval = conf["streaming_update_interval"]
         
         async for chunk in response:
-
             if hasattr(chunk, 'text') and chunk.text:
                 full_response += chunk.text
                 current_time = time.time()
@@ -180,7 +176,8 @@ async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str)
                              await bot.edit_message_text(full_response + "✍️", chat_id=sent_message.chat.id, message_id=sent_message.message_id)
                     last_update = current_time
 
-        await bot.edit_message_text(escape(full_response), chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
+        final_text = escape(full_response) if full_response else "پاسخی دریافت نشد."
+        await bot.edit_message_text(final_text, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
         
         user_chats[user_id_str]["stats"]["messages"] += 1
         user_chats[user_id_str]["history"] = _convert_chat_history_to_dicts(chat)
@@ -203,20 +200,22 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
     
     try:
         image = Image.open(io.BytesIO(photo_file))
+    
+        model = genai.GenerativeModel(model_type) 
         
-        history_dicts = user_chats[user_id_str]["history"]
 
-        if not history_dicts and default_image_processing_prompt:
-             history_dicts.append({"role": "user", "parts": [{"text": default_image_processing_prompt}]})
-             history_dicts.append({"role": "model", "parts": [{"text": "باشه، متوجه شدم. از این به بعد تصاویر را با توجه به این دستورالعمل پردازش می‌کنم."}]})
+        chat_contents = []
+        if default_image_processing_prompt:
+            chat_contents.append({"role": "user", "parts": [{"text": default_image_processing_prompt}]})
+            chat_contents.append({"role": "model", "parts": [{"text": "باشه، متوجه شدم. از این به بعد تصاویر را با توجه به این دستورالعمل پردازش می‌کنم."}]})
 
-        model = genai.GenerativeModel(model_type, tools=[search_tool] if model_type in MODELS_WITH_SEARCH else None)
-        chat = model.start_chat(history=history_dicts)
-        
+
+        chat_contents.append({"role": "user", "parts": [m, image]})
+
         if not sent_message:
             sent_message = await bot.reply_to(message, before_generate_info)
         
-        response = await chat.send_message_async([m, image], stream=True, safety_settings=safety_settings)
+        response = await model.generate_content_async(chat_contents, stream=True, safety_settings=safety_settings)
 
         full_response = ""
         last_update = time.time()
@@ -234,10 +233,11 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
                             await bot.edit_message_text(full_response + "✍️", chat_id=sent_message.chat.id, message_id=sent_message.message_id)
                     last_update = current_time
 
-        await bot.edit_message_text(escape(full_response), chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
+        final_text = escape(full_response) if full_response else "پاسخی دریافت نشد."
+        await bot.edit_message_text(final_text, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
         
+
         user_chats[user_id_str]["stats"]["messages"] += 1
-        user_chats[user_id_str]["history"] = _convert_chat_history_to_dicts(chat)
         asyncio.create_task(save_user_chats())
 
     except Exception as e:
@@ -253,10 +253,14 @@ async def gemini_draw(bot: TeleBot, message: Message, m: str):
     client = get_random_client()
     user_id_str = str(message.from_user.id)
     _initialize_user(user_id_str)
-    image_generation_chat = client.aio.chats.create(model=model_3, config=generation_config)
+    
 
     try:
-        response = await image_generation_chat.send_message(m)
+        response = await client.aio.models.generate_content(
+            model=model_3,
+            contents=m,
+            generation_config=generation_config
+        )
     except Exception as e:
         traceback.print_exc()
         await bot.send_message(message.chat.id, f"{error_info}\nخطا در هنگام تولید تصویر: {str(e)}")
@@ -298,11 +302,12 @@ async def gemini_edit(bot: TeleBot, message: Message, m: str, photo_file: bytes)
     sent_progress_message = None
     try:
         sent_progress_message = await bot.reply_to(message, "در حال پردازش تصویر با دستور شما... 🖼️")
+        
 
         response = await client.aio.models.generate_content(
             model=model_3,
             contents=[m, image],
-            config=generation_config
+            generation_config=generation_config
         )
 
         if sent_progress_message:
