@@ -54,10 +54,35 @@ def _initialize_user(user_id_str):
 async def save_user_chats():
     async with _save_lock:
         try:
+            # Create a history-only copy for saving to avoid saving complex objects
+            save_data = {}
+            for uid, data in user_chats.items():
+                save_data[uid] = {
+                    "history": [],
+                    "stats": data.get("stats", {"messages": 0, "generated_images": 0, "edited_images": 0})
+                }
+                if "history_for_saving" in data: # a temporary key to hold clean history
+                     save_data[uid]["history"] = data["history_for_saving"]
+                elif "history" in data: # fallback to old way if needed
+                    # This part cleans history from non-serializable objects like images
+                    clean_history = []
+                    for item in data["history"]:
+                        # Ensure item is a dict and has 'parts'
+                        if isinstance(item, dict) and 'parts' in item and isinstance(item['parts'], list):
+                             # Filter out non-text parts for saving
+                            text_parts = [p['text'] for p in item['parts'] if isinstance(p, dict) and 'text' in p]
+                            if text_parts:
+                                clean_history.append({
+                                    "role": item.get("role"),
+                                    "parts": [{"text": " ".join(text_parts)}]
+                                })
+                    save_data[uid]["history"] = clean_history
+
             async with aiofiles.open(USER_CHATS_FILE, "w", encoding="utf-8") as f:
-                await f.write(json.dumps(user_chats, ensure_ascii=False, indent=2))
+                await f.write(json.dumps(save_data, ensure_ascii=False, indent=2))
         except Exception as e:
             print(f"Error saving user chats to file: {e}")
+
 
 async def load_user_chats_async():
     global user_chats
@@ -173,7 +198,10 @@ async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str)
         await bot.edit_message_text(final_text, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
         
         user_chats[user_id_str]["stats"]["messages"] += 1
-        user_chats[user_id_str]["history"] = _convert_chat_history_to_dicts(chat)
+        # Store a clean, savable version of the history
+        user_chats[user_id_str]["history_for_saving"] = _convert_chat_history_to_dicts(chat)
+        # Keep the full history object in memory for the next turn
+        user_chats[user_id_str]["history"] = chat.history
         asyncio.create_task(save_user_chats())
 
     except Exception as e:
@@ -184,7 +212,11 @@ async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str)
         else:
             await bot.reply_to(message, error_message_detail)
 
+# --- START: MODIFIED FUNCTION ---
 async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, photo_file: bytes, model_type: str, status_message: Message = None):
+    """
+    Handles image processing with conversation history.
+    """
     random_configure()
     user_id_str = str(message.from_user.id)
     _initialize_user(user_id_str)
@@ -195,7 +227,16 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
         tools_to_use = _get_tools_for_model(model_type)
         model = genai.GenerativeModel(model_name=model_type, tools=tools_to_use, safety_settings=safety_settings)
         
-        chat_contents = [{"role": "user", "parts": [m, image]}]
+        # --- MEMORY IMPLEMENTATION ---
+        # Get previous text-based history
+        history_dicts = user_chats[user_id_str].get("history", [])
+        
+        # Create the new user message with both text and image
+        user_message_part = {"role": "user", "parts": [m, image]}
+        
+        # Combine history with the new message
+        chat_contents = history_dicts + [user_message_part]
+        
         if not sent_message:
             sent_message = await bot.reply_to(message, before_generate_info)
         
@@ -214,6 +255,15 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
         
         final_text = escape(full_response) if full_response else "پاسخی دریافت نشد. (احتمالاً به دلیل فیلتر ایمنی)"
         await bot.edit_message_text(final_text, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
+        
+        # --- HISTORY UPDATE ---
+        # Add user's new message (text part only for saving) and model's response to history
+        model_response_part = {"role": "model", "parts": [{"text": full_response}]}
+        # For saving, we only keep the text part of the user's message
+        user_message_part_for_saving = {"role": "user", "parts": [{"text": m}]}
+        
+        # Update the history in memory
+        user_chats[user_id_str]["history"].extend([user_message_part_for_saving, model_response_part])
         user_chats[user_id_str]["stats"]["messages"] += 1
         asyncio.create_task(save_user_chats())
 
@@ -222,30 +272,42 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
         error_message_detail = f"{error_info}\nجزئیات خطا: {str(e)}"
         if sent_message: await bot.edit_message_text(error_message_detail, chat_id=sent_message.chat.id, message_id=sent_message.message_id)
         else: await bot.reply_to(message, error_message_detail)
+# --- END: MODIFIED FUNCTION ---
 
+# --- START: MODIFIED FUNCTION ---
 async def gemini_process_voice(bot: TeleBot, message: Message, voice_file: bytes, model_type: str):
+    """
+    Transcribes voice messages to text and returns it in a monospace block.
+    """
     random_configure()
     user_id_str = str(message.from_user.id)
     _initialize_user(user_id_str)
     sent_message = None
     try:
-        sent_message = await bot.reply_to(message, "در حال پردازش پیام صوتی... 🎤")
-        prompt = "این پیام صوتی را به دقت به متن تبدیل کن و سپس به محتوای آن به طور کامل پاسخ بده."
+        sent_message = await bot.reply_to(message, "در حال تبدیل ویس به متن... 🎤")
+        # --- MODIFIED PROMPT ---
+        # This new prompt asks the model ONLY to transcribe the audio.
+        prompt = "فقط این پیام صوتی را به متن تبدیل کن. هیچ چیز اضافه‌ای ننویس."
         model = genai.GenerativeModel(model_name=model_type, safety_settings=safety_settings)
-        response = await model.generate_content_async([prompt, {"mime_type": "audio/ogg", "data": voice_file}], stream=True)
+        # Using a non-streaming call is simpler for transcription
+        response = await model.generate_content_async([prompt, {"mime_type": "audio/ogg", "data": voice_file}])
         
-        full_response = await _handle_response_streaming(response, sent_message, bot)
+        transcribed_text = response.text.strip() if response.text else "متنی از این پیام صوتی تشخیص داده نشد."
         
-        final_text = escape(full_response) if full_response else "پاسخی برای این پیام صوتی دریافت نشد."
+        # --- MODIFIED OUTPUT FORMAT ---
+        # Format the output as a monospace block for easy copying.
+        final_text = f"```\n{transcribed_text}\n```"
         await bot.edit_message_text(final_text, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
         
-        user_chats[user_id_str]["stats"]["messages"] += 1
-        asyncio.create_task(save_user_chats())
+        # Note: We are NOT updating message stats or history for this action,
+        # as it's a utility (transcription) not a conversation turn.
+
     except Exception as e:
         traceback.print_exc()
         error_message_detail = f"{error_info}\nجزئیات خطا: {str(e)}"
         if sent_message: await bot.edit_message_text(error_message_detail, chat_id=sent_message.chat.id, message_id=sent_message.message_id)
         else: await bot.reply_to(message, error_message_detail)
+# --- END: MODIFIED FUNCTION ---
 
 async def gemini_draw(bot: TeleBot, message: Message, m: str):
     client = get_random_client()
