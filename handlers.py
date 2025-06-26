@@ -99,6 +99,36 @@ async def show_help(message: Message, bot: TeleBot):
 
     await bot.reply_to(message, help_text, parse_mode="MarkdownV2")
 
+@pre_command_checks
+async def show_info(message: Message, bot: TeleBot):
+    """آمار استفاده کاربر را نمایش می‌دهد."""
+    user_id_str = str(message.from_user.id)
+    
+    user_data = gemini.user_chats.get(user_id_str)
+    
+    if user_data and "stats" in user_data:
+        stats = user_data["stats"]
+        messages = stats.get("messages", 0)
+        generated_images = stats.get("generated_images", 0)
+        edited_images = stats.get("edited_images", 0)
+    else:
+        messages = 0
+        generated_images = 0
+        edited_images = 0
+
+    info_text_raw = (
+        f"📊 *آمار استفاده شما* 📊\n\n"
+        f"💬 *تعداد کل پیام‌ها:* {messages}\n"
+        f"  _(شامل پیام‌های متنی و پردازش تصویر)_\n\n"
+        f"🎨 *تصاویر ساخته شده امروز:* {generated_images}\n"
+        f"  _(با دستور /img)_\n\n"
+        f"🖼️ *تصاویر ویرایش شده امروز:* {edited_images}\n"
+        f"  _(با دستور /edit)_\n\n"
+        f"__آمار ساخت و ویرایش تصویر هر روز ساعت ۰۰:۰۰ بامداد به وقت ایران ریست می‌شود.__"
+    )
+    
+    await bot.reply_to(message, escape(info_text_raw), parse_mode="MarkdownV2")
+
 # --- کنترلگرهای اصلی ---
 @pre_command_checks
 async def start(message: Message, bot: TeleBot) -> None:
@@ -112,15 +142,19 @@ async def start(message: Message, bot: TeleBot) -> None:
 async def clear(message: Message, bot: TeleBot) -> None:
     user_id_str = str(message.from_user.id)
     history_cleared_flag = False
+    
     if user_id_str in gemini.user_chats:
-        del gemini.user_chats[user_id_str]
+        # Reset history and message count, but keep daily stats
+        gemini.user_chats[user_id_str]["history"] = []
+        if "stats" in gemini.user_chats[user_id_str]:
+            gemini.user_chats[user_id_str]["stats"]["messages"] = 0
         history_cleared_flag = True
 
+    # Also clear model preference
     if user_id_str in user_model_preference:
         del user_model_preference[user_id_str]
     
     if history_cleared_flag:
-        # FIX: The function is called save_user_chats, not save_user_chats_to_file
         asyncio.create_task(gemini.save_user_chats())
         await bot.reply_to(message, pm["history_cleared"])
     else:
@@ -181,7 +215,6 @@ async def gemini_photo_handler(message: Message, bot: TeleBot) -> None:
     prompt_to_use = ""
     is_group = message.chat.type != "private"
 
-    # ... (بخش تعیین prompt_to_use بدون تغییر)
     if is_group:
         if not caption.startswith("."):
             return
@@ -198,7 +231,6 @@ async def gemini_photo_handler(message: Message, bot: TeleBot) -> None:
         return
 
     try:
-        # ۱. پیام وضعیت را ایجاد و در یک متغیر ذخیره کن
         status_message = await bot.reply_to(original_message, pm["photo_proccessing_prompt"])
         file_path = await bot.get_file(message.photo[-1].file_id)
         photo_file = await bot.download_file(file_path.file_path)
@@ -211,7 +243,6 @@ async def gemini_photo_handler(message: Message, bot: TeleBot) -> None:
     prefers_model_1 = user_model_preference.get(user_id_str, True)
     model_to_use = model_1 if prefers_model_1 else model_2
 
-    # ۲. پیام وضعیت ذخیره شده را به تابع پردازش پاس بده
     await gemini.gemini_process_image_stream(bot, message, prompt_to_use, photo_file, model_to_use, status_message)
 
 
@@ -323,7 +354,6 @@ async def handle_callback_query(call: telebot_types.CallbackQuery, bot: TeleBot)
             await bot.answer_callback_query(call.id, "خطا در پردازش درخواست.")
             error_msg_to_show = error_info
             if "user not found" in str(e).lower():
-                # این حالت یعنی کاربر عضو نیست
                 await bot.edit_message_text(
                     pm["membership_not_confirmed"],
                     chat_id=chat_to_edit_id,
