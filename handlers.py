@@ -8,7 +8,6 @@ import asyncio
 from config import conf, CHANNEL_USERNAME
 import gemini
 
-# بارگذاری پیام‌های فارسی
 pm = conf["persian_messages"]
 error_info              =       conf["error_info"]
 before_generate_info    =       conf["before_generate_info"]
@@ -17,8 +16,48 @@ model_1                 =       conf["model_1"]
 model_2                 =       conf["model_2"]
 model_3                 =       conf["model_3"]
 default_image_prompt    =       conf.get("default_image_processing_prompt", "این تصویر را توصیف کن.")
-
 user_model_preference = {}
+
+async def _build_prompt_with_reply_context(message: Message, bot: TeleBot):
+    new_prompt = message.text or message.caption or ""
+    photo_file = None
+    status_message = None
+
+    if not message.reply_to_message:
+        return new_prompt, None, None
+
+    replied_msg = message.reply_to_message
+    context_prefix = ""
+
+    
+    if replied_msg.photo:
+        try:
+            status_message = await bot.reply_to(message, pm["photo_proccessing_prompt"])
+            file_path = await bot.get_file(replied_msg.photo[-1].file_id)
+            photo_file = await bot.download_file(file_path.file_path)
+            final_prompt = new_prompt if new_prompt else default_image_prompt
+            return final_prompt, photo_file, status_message
+        except Exception as e:
+            traceback.print_exc()
+            await bot.reply_to(message, f"{error_info}\nخطا در دانلود عکس کانتکست: {e}")
+            return None, None, status_message 
+
+    elif replied_msg.text:
+        sender = "کاربر"
+        if replied_msg.from_user.is_bot:
+            sender = "دستیار AI"
+        
+        context_prefix = (
+            f"از این پیام به عنوان کانتکست برای پاسخ به درخواست جدید استفاده کن:\n"
+            f"--- شروع کانتکست ---\n"
+            f"({sender}): '{replied_msg.text}'\n"
+            f"--- پایان کانتکست ---\n\n"
+            f"درخواست جدید کاربر: "
+        )
+    
+    final_prompt = context_prefix + new_prompt
+    return final_prompt, None, None
+
 
 def pre_command_checks(func):
     @wraps(func)
@@ -67,6 +106,7 @@ def pre_command_checks(func):
 
 @pre_command_checks
 async def show_help(message: Message, bot: TeleBot):
+
     title = "راهنمای جامع استفاده از بات"
     img_description_raw = """برای تولید عکس توسط ربات ابتدا این دستور را از طریق منوی پایین چپ نگه داشته تا عبارت آن بر روی کیبورد نمایان بشه.
 پس از این متن خودتون رو جلوی دستور برای ساخت عکس بنویسید.
@@ -79,7 +119,7 @@ async def show_help(message: Message, bot: TeleBot):
     group_text_raw = "در گروه ها، برای اینکه ربات به پیام متنی شما پاسخ دهد، پیام خود را با `.` شروع کنید. مثال: `.سلام خوبی؟`"
     group_image_raw = "در گروه ها، برای پردازش یک عکس (مثلاً توصیف آن)، کپشن عکس را با `.` شروع کنید. مثال: `.این عکس چیست؟`"
     footer_raw = "در صورت داشتن هرگونه ابهام یا مشکل در ربات حتما به من بگید تا درستش کنم"
-    admin_id_raw = "اینم آیدیم: @AmirStPlays"
+    admin_id_raw = "اینم آیدیم: ||@AmirStPlays||"
 
     help_text = f"**{escape(title)}**\n\n"
     help_text += escape("1. دستور /img (تولید تصویر)") + "\n"
@@ -101,7 +141,6 @@ async def show_help(message: Message, bot: TeleBot):
 
 @pre_command_checks
 async def show_info(message: Message, bot: TeleBot):
-    """آمار استفاده کاربر را نمایش می‌دهد."""
     user_id_str = str(message.from_user.id)
     
     user_data = gemini.user_chats.get(user_id_str)
@@ -117,19 +156,18 @@ async def show_info(message: Message, bot: TeleBot):
         edited_images = 0
 
     info_text_raw = (
-        f"📊 *آمار استفاده شما* 📊\n\n"
-        f"💬 *تعداد کل پیام‌ها:* {messages}\n"
-        f"  _(شامل پیام‌های متنی و پردازش تصویر)_\n\n"
-        f"🎨 *تصاویر ساخته شده امروز:* {generated_images}\n"
-        f"  _(با دستور /img)_\n\n"
-        f"🖼️ *تصاویر ویرایش شده امروز:* {edited_images}\n"
-        f"  _(با دستور /edit)_\n\n"
-        f"__آمار ساخت و ویرایش تصویر هر روز ساعت ۰۰:۰۰ بامداد به وقت ایران ریست می‌شود.__"
+        f"📊 ***آمار استفاده شما*** 📊\n\n"
+        f"💬 تعداد کل پیام‌ها: {messages}\n"
+        f"  ||_(شامل پیام‌های متنی و پردازش تصویر)_||\n\n"
+        f"🎨 تصاویر ساخته شده امروز: {generated_images}\n"
+        f"  ||_(با دستور /img)_||\n\n"
+        f"🖼️ تصاویر ویرایش شده امروز: {edited_images}\n"
+        f"  ||_(با دستور /edit)_||\n\n"
+        f"__آمار ساخت و ویرایش تصویر هر روز ساعت ۰۰:۰۰ بامداد ریست می‌شود.__"
     )
     
     await bot.reply_to(message, escape(info_text_raw), parse_mode="MarkdownV2")
 
-# --- کنترلگرهای اصلی ---
 @pre_command_checks
 async def start(message: Message, bot: TeleBot) -> None:
     try:
@@ -144,13 +182,11 @@ async def clear(message: Message, bot: TeleBot) -> None:
     history_cleared_flag = False
     
     if user_id_str in gemini.user_chats:
-        # Reset history and message count, but keep daily stats
         gemini.user_chats[user_id_str]["history"] = []
         if "stats" in gemini.user_chats[user_id_str]:
             gemini.user_chats[user_id_str]["stats"]["messages"] = 0
         history_cleared_flag = True
 
-    # Also clear model preference
     if user_id_str in user_model_preference:
         del user_model_preference[user_id_str]
     
@@ -163,6 +199,7 @@ async def clear(message: Message, bot: TeleBot) -> None:
 
 @pre_command_checks
 async def switch(message: Message, bot: TeleBot) -> None:
+
     if message.chat.type != "private":
         await bot.reply_to( message , pm["switch_only_private"])
         return
@@ -180,39 +217,60 @@ async def switch(message: Message, bot: TeleBot) -> None:
 
 @pre_command_checks
 async def gemini_private_handler(message: Message, bot: TeleBot) -> None:
-    m = message.text.strip()
-    if not m:
+    """هندلر اصلی برای پیام های متنی در چت خصوصی (با قابلیت درک ریپلای)"""
+    final_prompt, photo_file, status_message = await _build_prompt_with_reply_context(message, bot)
+    
+    if final_prompt is None:
+        if status_message:
+            await bot.delete_message(status_message.chat.id, status_message.message_id)
+        return
+        
+    if not final_prompt.strip():
         return
 
     user_id_str = str(message.from_user.id)
     prefers_model_1 = user_model_preference.get(user_id_str, True)
-
     model_to_use = model_1 if prefers_model_1 else model_2
-    await gemini.gemini_stream(bot, message, m, model_to_use)
+    
+    if photo_file:
+        await gemini.gemini_process_image_stream(bot, message, final_prompt, photo_file, model_to_use, status_message)
+    else:
+        await gemini.gemini_stream(bot, message, final_prompt, model_to_use)
+
 
 @pre_command_checks
 async def gemini_group_text_handler(message: Message, bot: TeleBot) -> None:
+    """هندلر اصلی برای پیام های متنی در گروه (با قابلیت درک ریپلای)"""
     text = message.text.strip()
     if not text.startswith('.'):
         return
 
-    m = text[1:].strip()
-    if not m:
+    # To use the context builder, we need to pass the message with the dot removed
+    message.text = text[1:].strip()
+    if not message.text:
         await bot.reply_to(message, pm["group_prompt_needed"])
+        return
+        
+    final_prompt, photo_file, status_message = await _build_prompt_with_reply_context(message, bot)
+    
+    if final_prompt is None: # An error occurred
+        if status_message:
+            await bot.delete_message(status_message.chat.id, status_message.message_id)
         return
 
     user_id_str = str(message.from_user.id)
     prefers_model_1 = user_model_preference.get(user_id_str, True)
-
     model_to_use = model_1 if prefers_model_1 else model_2
-    await gemini.gemini_stream(bot, message, m, model_to_use)
+    
+    if photo_file:
+        await gemini.gemini_process_image_stream(bot, message, final_prompt, photo_file, model_to_use, status_message)
+    else:
+        await gemini.gemini_stream(bot, message, final_prompt, model_to_use)
 
 
 @pre_command_checks
 async def gemini_photo_handler(message: Message, bot: TeleBot) -> None:
-    original_message = message
     caption = (message.caption or "").strip()
-    prompt_to_use = ""
     is_group = message.chat.type != "private"
 
     if is_group:
@@ -231,7 +289,7 @@ async def gemini_photo_handler(message: Message, bot: TeleBot) -> None:
         return
 
     try:
-        status_message = await bot.reply_to(original_message, pm["photo_proccessing_prompt"])
+        status_message = await bot.reply_to(message, pm["photo_proccessing_prompt"])
         file_path = await bot.get_file(message.photo[-1].file_id)
         photo_file = await bot.download_file(file_path.file_path)
     except Exception as e:
@@ -287,7 +345,7 @@ async def gemini_edit_handler(message: Message, bot: TeleBot) -> None:
 
 
 @pre_command_checks
-async def draw_handler(message: Message, bot: TeleBot) -> None: # Handles /img
+async def draw_handler(message: Message, bot: TeleBot) -> None:
     try:
         m = message.text.strip().split(maxsplit=1)[1].strip()
         if not m:
