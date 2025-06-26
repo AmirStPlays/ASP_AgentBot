@@ -26,12 +26,8 @@ download_pic_notify = conf["download_pic_notify"]
 default_system_prompt = conf.get("default_system_prompt", "").strip()
 default_image_processing_prompt = conf.get("default_image_processing_prompt", "")
 
-
-
-search_tool = {"google_search": {}}
-
-
-MODELS_WITH_SEARCH = {conf["model_1"]}
+search_tool = "google_search"
+MODELS_WITH_SEARCH = {conf["model_1"], conf["model_2"]}
 
 
 load_dotenv()
@@ -52,6 +48,7 @@ def random_configure():
     return genai.configure(api_key=api_key)
 
 def _initialize_user(user_id_str):
+    """Initializes a user's data structure if it doesn't exist."""
     if user_id_str not in user_chats:
         user_chats[user_id_str] = {
             "history": [],
@@ -72,6 +69,7 @@ def _initialize_user(user_id_str):
 
 
 async def save_user_chats():
+    """تاریخچه گفتگو و آمار را در فایل ذخیره می‌کند."""
     async with _save_lock:
         try:
             async with aiofiles.open(USER_CHATS_FILE, "w", encoding="utf-8") as f:
@@ -80,6 +78,7 @@ async def save_user_chats():
             print(f"Error saving user chats to file: {e}")
 
 async def load_user_chats_async():
+    """تاریخچه گفتگو و آمار را از فایل بارگذاری می‌کند."""
     global user_chats
     user_chats = {}
     print("Initialized in-memory user_chats dictionary.")
@@ -94,6 +93,7 @@ async def load_user_chats_async():
             user_chats = {}
 
 def _convert_chat_history_to_dicts(chat_session):
+    """تاریخچه یک جلسه چت فعال را به لیست دیکشنری برای ذخیره‌سازی تبدیل می‌کند."""
     history_list = []
     for content in chat_session.history:
         if content.parts and all(hasattr(p, 'text') for p in content.parts):
@@ -107,10 +107,8 @@ def _convert_chat_history_to_dicts(chat_session):
 async def daily_reset_stats():
     """آمار روزانه ساخت و ویرایش تصویر را برای همه کاربران در نیمه‌شب ریست می‌کند."""
     while True:
-        # Timezone for Iran
         tz = timezone(timedelta(hours=3, minutes=30))
         now = datetime.now(tz)
-        # Calculate midnight of the next day
         tomorrow = now.date() + timedelta(days=1)
         midnight = datetime.combine(tomorrow, dt_time(0, 0), tzinfo=tz)
         
@@ -126,7 +124,7 @@ async def daily_reset_stats():
                     user_chats[user_id]["stats"]["generated_images"] = 0
                     user_chats[user_id]["stats"]["edited_images"] = 0
             
-            await save_user_chats() 
+            await save_user_chats()
         print("Daily stat reset complete.")
         await asyncio.sleep(1)
 
@@ -153,8 +151,9 @@ async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str)
                 print(f"Default prompt added for user {user_id_str}")
             except Exception as e:
                 print(f"Warning failed to add default prompt: {e}")
-
-        model = genai.GenerativeModel(model_type, tools=[search_tool] if model_type in MODELS_WITH_SEARCH else None)
+        
+        tools_to_use = [search_tool] if model_type in MODELS_WITH_SEARCH else None
+        model = genai.GenerativeModel(model_type, tools=tools_to_use)
         chat = model.start_chat(history=history_dicts)
         
         sent_message = await bot.reply_to(message, before_generate_info)
@@ -200,15 +199,13 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
     
     try:
         image = Image.open(io.BytesIO(photo_file))
-    
-        model = genai.GenerativeModel(model_type) 
+        tools_to_use = [search_tool] if model_type in MODELS_WITH_SEARCH else None
+        model = genai.GenerativeModel(model_type, tools=tools_to_use)
         
-
         chat_contents = []
         if default_image_processing_prompt:
             chat_contents.append({"role": "user", "parts": [{"text": default_image_processing_prompt}]})
             chat_contents.append({"role": "model", "parts": [{"text": "باشه، متوجه شدم. از این به بعد تصاویر را با توجه به این دستورالعمل پردازش می‌کنم."}]})
-
 
         chat_contents.append({"role": "user", "parts": [m, image]})
 
@@ -236,7 +233,6 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
         final_text = escape(full_response) if full_response else "پاسخی دریافت نشد."
         await bot.edit_message_text(final_text, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
         
-
         user_chats[user_id_str]["stats"]["messages"] += 1
         asyncio.create_task(save_user_chats())
 
@@ -254,7 +250,6 @@ async def gemini_draw(bot: TeleBot, message: Message, m: str):
     user_id_str = str(message.from_user.id)
     _initialize_user(user_id_str)
     
-
     try:
         response = await client.aio.models.generate_content(
             model=model_3,
@@ -303,7 +298,6 @@ async def gemini_edit(bot: TeleBot, message: Message, m: str, photo_file: bytes)
     try:
         sent_progress_message = await bot.reply_to(message, "در حال پردازش تصویر با دستور شما... 🖼️")
         
-
         response = await client.aio.models.generate_content(
             model=model_3,
             contents=[m, image],
