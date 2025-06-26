@@ -32,13 +32,15 @@ class Options:
 options = Options(TG_TOKEN_PROVIDED)
 
 async def run_bot():
-    handlers.clear_updates(TG_TOKEN_PROVIDED) # --> delete every other getUpadates first
+    handlers.clear_updates(TG_TOKEN_PROVIDED)
     await gemini.load_user_chats_async()
+    asyncio.create_task(gemini.daily_reset_stats()) # اجرای تسک ریست روزانه
     bot = AsyncTeleBot(options.tg_token)
 
     await bot.delete_my_commands(scope=None, language_code=None)
     await bot.set_my_commands(commands=[
         telebot.types.BotCommand("start", "شروع و خوش آمدگویی"),
+        telebot.types.BotCommand("info", "نمایش آمار استفاده کاربر"),
         telebot.types.BotCommand("clear", "پاک کردن تاریخچه گفتگو (برای کاربر)"),
         telebot.types.BotCommand("img", "ترسیم تصویر (مثال: /img یک گربه)"),
         telebot.types.BotCommand("edit", "ویرایش عکس با توضیح (ریپلای روی عکس)"),
@@ -48,6 +50,7 @@ async def run_bot():
 
     # Register handlers
     bot.register_message_handler(handlers.start, commands=['start'], pass_bot=True)
+    bot.register_message_handler(handlers.show_info, commands=['info'], pass_bot=True)
     bot.register_message_handler(handlers.draw_handler, commands=['img'], pass_bot=True)
     bot.register_message_handler(handlers.gemini_edit_handler, commands=['edit'], pass_bot=True)
     bot.register_message_handler(handlers.clear, commands=['clear'], pass_bot=True)
