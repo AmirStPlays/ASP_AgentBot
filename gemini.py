@@ -26,8 +26,16 @@ download_pic_notify = conf["download_pic_notify"]
 default_system_prompt = conf.get("default_system_prompt", "").strip()
 default_image_processing_prompt = conf.get("default_image_processing_prompt", "")
 
-search_tool = "google_search"
-MODELS_WITH_SEARCH = {conf["model_1"], conf["model_2"]}
+
+# FIX: Correctly define tools according to the latest SDK requirements.
+# This list now contains both Google Search and Code Execution.
+search_and_code_tools = [
+    genai.Tool(google_search_retrieval={}),
+    "code_execution"
+]
+
+# Enable tools for both main models.
+MODELS_WITH_TOOLS = {conf["model_1"], conf["model_2"]}
 
 
 load_dotenv()
@@ -96,6 +104,12 @@ def _convert_chat_history_to_dicts(chat_session):
     """تاریخچه یک جلسه چت فعال را به لیست دیکشنری برای ذخیره‌سازی تبدیل می‌کند."""
     history_list = []
     for content in chat_session.history:
+        # Don't save tool calls/responses to history to avoid issues.
+        # Check if any part is a function call or function response
+        is_tool_related = any(hasattr(p, 'function_call') or hasattr(p, 'function_response') for p in content.parts)
+        if is_tool_related:
+            continue
+
         if content.parts and all(hasattr(p, 'text') for p in content.parts):
              role = content.role if content.role else "model"
              parts = [{"text": part.text} for part in content.parts if hasattr(part, 'text')]
@@ -152,9 +166,9 @@ async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str)
             except Exception as e:
                 print(f"Warning failed to add default prompt: {e}")
         
-        tools_to_use = [search_tool] if model_type in MODELS_WITH_SEARCH else None
-        model = genai.GenerativeModel(model_type, tools=tools_to_use)
-        chat = model.start_chat(history=history_dicts)
+        tools_to_use = search_and_code_tools if model_type in MODELS_WITH_TOOLS else None
+        model = genai.GenerativeModel(model_name=model_type, tools=tools_to_use)
+        chat = model.start_chat(history=history_dicts, enable_automatic_function_calling=True)
         
         sent_message = await bot.reply_to(message, before_generate_info)
         response = await chat.send_message_async(m, stream=True, safety_settings=safety_settings)
@@ -199,8 +213,9 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
     
     try:
         image = Image.open(io.BytesIO(photo_file))
-        tools_to_use = [search_tool] if model_type in MODELS_WITH_SEARCH else None
-        model = genai.GenerativeModel(model_type, tools=tools_to_use)
+        
+        tools_to_use = search_and_code_tools if model_type in MODELS_WITH_TOOLS else None
+        model = genai.GenerativeModel(model_name=model_type, tools=tools_to_use)
         
         chat_contents = []
         if default_image_processing_prompt:
@@ -212,7 +227,12 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
         if not sent_message:
             sent_message = await bot.reply_to(message, before_generate_info)
         
-        response = await model.generate_content_async(chat_contents, stream=True, safety_settings=safety_settings)
+        response = await model.generate_content_async(
+            chat_contents, 
+            stream=True, 
+            safety_settings=safety_settings,
+            # Automatic function calling is handled by the model when tools are present
+        )
 
         full_response = ""
         last_update = time.time()
