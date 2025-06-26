@@ -7,7 +7,7 @@ from telebot.types import Message
 from md2tgmd import escape
 from telebot import TeleBot
 from config import conf, safety_settings, generation_config
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, time as dt_time
 import google.generativeai as genai
 from google import genai as genai1
 import os
@@ -40,6 +40,8 @@ GEMINI_API_KEYS = os.getenv("gemini_api_keys", "").split(",")
 
 user_chats = {}
 USER_CHATS_FILE = "user_chats_data.json"
+_save_lock = asyncio.Lock()
+
 
 def get_random_client():
     api_key = random.choice(GEMINI_API_KEYS)
@@ -49,17 +51,37 @@ def random_configure():
     api_key = random.choice(GEMINI_API_KEYS)
     return genai.configure(api_key=api_key)
 
+def _initialize_user(user_id_str):
+    """Initializes a user's data structure if it doesn't exist."""
+    if user_id_str not in user_chats:
+        user_chats[user_id_str] = {
+            "history": [],
+            "stats": {
+                "messages": 0,
+                "generated_images": 0,
+                "edited_images": 0,
+            }
+        }
+    elif "stats" not in user_chats[user_id_str]:
+        user_chats[user_id_str]["stats"] = {
+            "messages": 0,
+            "generated_images": 0,
+            "edited_images": 0,
+        }
+
+
 async def save_user_chats():
-    """تاریخچه گفتگو (لیستی از دیکشنری‌ها) را در فایل ذخیره می‌کند."""
-    print("Saving user chats to file...")
-    try:
-        async with aiofiles.open(USER_CHATS_FILE, "w", encoding="utf-8") as f:
-            await f.write(json.dumps(user_chats, ensure_ascii=False, indent=2))
-    except Exception as e:
-        print(f"Error saving user chats to file: {e}")
+    """تاریخچه گفتگو و آمار را در فایل ذخیره می‌کند."""
+    async with _save_lock:
+        print("Saving user chats to file...")
+        try:
+            async with aiofiles.open(USER_CHATS_FILE, "w", encoding="utf-8") as f:
+                await f.write(json.dumps(user_chats, ensure_ascii=False, indent=2))
+        except Exception as e:
+            print(f"Error saving user chats to file: {e}")
 
 async def load_user_chats_async():
-    """تاریخچه گفتگو را از فایل بارگذاری می‌کند."""
+    """تاریخچه گفتگو و آمار را از فایل بارگذاری می‌کند."""
     global user_chats
     user_chats = {}
     print("Initialized in-memory user_chats dictionary.")
@@ -86,16 +108,40 @@ def _convert_chat_history_to_dicts(chat_session):
     return history_list
 
 
+async def daily_reset_stats():
+    """آمار روزانه ساخت و ویرایش تصویر را برای همه کاربران در نیمه‌شب ریست می‌کند."""
+    while True:
+        # Timezone for Iran
+        tz = timezone(timedelta(hours=3, minutes=30))
+        now = datetime.now(tz)
+        # Calculate midnight of the next day
+        tomorrow = now.date() + timedelta(days=1)
+        midnight = datetime.combine(tomorrow, dt_time(0, 0), tzinfo=tz)
+        
+        seconds_until_midnight = (midnight - now).total_seconds()
+        print(f"Daily stat reset scheduled in {seconds_until_midnight / 3600:.2f} hours.")
+        await asyncio.sleep(seconds_until_midnight)
+
+        print("Performing daily stat reset...")
+        users_to_reset = list(user_chats.keys())
+        for user_id in users_to_reset:
+            if "stats" in user_chats.get(user_id, {}):
+                user_chats[user_id]["stats"]["generated_images"] = 0
+                user_chats[user_id]["stats"]["edited_images"] = 0
+        
+        await save_user_chats()
+        print("Daily stat reset complete.")
+        await asyncio.sleep(1)
+
+
 async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str):
     random_configure()
     sent_message = None
     user_id_str = str(message.from_user.id)
+    _initialize_user(user_id_str)
 
     try:
-        if user_id_str not in user_chats:
-            user_chats[user_id_str] = {"history": []}
-        
-        history_dicts = user_chats[user_id_str].get("history", [])
+        history_dicts = user_chats[user_id_str]["history"]
 
         if not history_dicts and default_system_prompt:
             try:
@@ -136,6 +182,7 @@ async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str)
 
         await bot.edit_message_text(escape(full_response), chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
         
+        user_chats[user_id_str]["stats"]["messages"] += 1
         user_chats[user_id_str]["history"] = _convert_chat_history_to_dicts(chat)
         asyncio.create_task(save_user_chats())
 
@@ -151,15 +198,13 @@ async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str)
 async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, photo_file: bytes, model_type: str, status_message: Message = None):
     random_configure()
     user_id_str = str(message.from_user.id)
+    _initialize_user(user_id_str)
     sent_message = status_message
     
     try:
         image = Image.open(io.BytesIO(photo_file))
         
-        if user_id_str not in user_chats:
-            user_chats[user_id_str] = {"history": []}
-        
-        history_dicts = user_chats[user_id_str].get("history", [])
+        history_dicts = user_chats[user_id_str]["history"]
 
         if not history_dicts and default_image_processing_prompt:
              history_dicts.append({"role": "user", "parts": [{"text": default_image_processing_prompt}]})
@@ -191,6 +236,7 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
 
         await bot.edit_message_text(escape(full_response), chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
         
+        user_chats[user_id_str]["stats"]["messages"] += 1
         user_chats[user_id_str]["history"] = _convert_chat_history_to_dicts(chat)
         asyncio.create_task(save_user_chats())
 
@@ -205,6 +251,8 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
 
 async def gemini_draw(bot: TeleBot, message: Message, m: str):
     client = get_random_client()
+    user_id_str = str(message.from_user.id)
+    _initialize_user(user_id_str)
     image_generation_chat = client.aio.chats.create(model=model_3, config=generation_config)
 
     try:
@@ -220,7 +268,7 @@ async def gemini_draw(bot: TeleBot, message: Message, m: str):
         await bot.send_message(message.chat.id, f"احتمال زیاد مشکل از متنته.\nاحتمالا یکم sus بوده.🤭")
         return
 
-    processed_parts = False
+    image_sent = False
     for part in response.candidates[0].content.parts:
         if hasattr(part, 'text') and part.text is not None:
             text = part.text
@@ -229,13 +277,15 @@ async def gemini_draw(bot: TeleBot, message: Message, m: str):
                 text = text[4000:]
             if text:
                 await bot.send_message(message.chat.id, escape(text), parse_mode="MarkdownV2")
-            processed_parts = True
         elif hasattr(part, 'inline_data') and part.inline_data is not None and hasattr(part.inline_data, 'data'):
             photo_data = part.inline_data.data
             await bot.send_photo(message.chat.id, photo_data, caption=escape(f"تصویر تولید شده برای: {m[:100]}"))
-            processed_parts = True
+            image_sent = True
 
-    if not processed_parts:
+    if image_sent:
+        user_chats[user_id_str]["stats"]["generated_images"] += 1
+        asyncio.create_task(save_user_chats())
+    elif not any(hasattr(p, 'text') and p.text for p in response.candidates[0].content.parts):
         await bot.send_message(message.chat.id, "تصویری تولید نشد یا محتوای قابل نمایشی وجود نداشت.")
 
 
@@ -243,12 +293,8 @@ async def gemini_edit(bot: TeleBot, message: Message, m: str, photo_file: bytes)
     image = Image.open(io.BytesIO(photo_file))
     client = get_random_client()
     user_id_str = str(message.from_user.id)
-    chat = user_chats.get(user_id_str)
-
-    if not chat:
-        chat = client.aio.chats.create(model=model_3, config=generation_config)
-        user_chats[user_id_str] = chat
-
+    _initialize_user(user_id_str)
+    
     sent_progress_message = None
     try:
         sent_progress_message = await bot.reply_to(message, "در حال پردازش تصویر با دستور شما... 🖼️")
@@ -267,7 +313,7 @@ async def gemini_edit(bot: TeleBot, message: Message, m: str, photo_file: bytes)
             await bot.send_message(message.chat.id, f"{error_info}\nپاسخ معتبری از سرویس دریافت نشد.")
             return
 
-        processed_parts = False
+        image_sent = False
         for part in response.candidates[0].content.parts:
             if hasattr(part, 'text') and part.text is not None:
                 text_response = part.text
@@ -276,13 +322,15 @@ async def gemini_edit(bot: TeleBot, message: Message, m: str, photo_file: bytes)
                     text_response = text_response[4000:]
                 if text_response:
                     await bot.send_message(message.chat.id, escape(text_response), parse_mode="MarkdownV2")
-                processed_parts = True
             elif hasattr(part, 'inline_data') and part.inline_data is not None and hasattr(part.inline_data, 'data'):
                 photo = part.inline_data.data
                 await bot.send_photo(message.chat.id, photo, caption=escape("نتیجه ویرایش تصویر:") if not m.startswith("تصویر را توصیف کن") else escape(m))
-                processed_parts = True
+                image_sent = True
 
-        if not processed_parts:
+        if image_sent:
+            user_chats[user_id_str]["stats"]["edited_images"] += 1
+            asyncio.create_task(save_user_chats())
+        elif not any(hasattr(p, 'text') and p.text for p in response.candidates[0].content.parts):
             await bot.send_message(message.chat.id, "پاسخی از مدل دریافت نشد یا محتوای قابل نمایشی وجود نداشت.")
 
     except Exception as e:
