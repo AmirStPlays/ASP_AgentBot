@@ -10,6 +10,7 @@ from config import conf, safety_settings, generation_config
 from datetime import datetime, timezone, timedelta, time as dt_time
 import google.generativeai as genai
 from google import genai as genai1
+from google.generativeai.types import generation_types
 import os
 from dotenv import load_dotenv
 import json
@@ -44,9 +45,9 @@ def random_configure():
 
 def _initialize_user(user_id_str):
     if user_id_str not in user_chats:
-        user_chats[user_id_str] = {"history": [], "stats": {"messages": 0, "generated_images": 0, "edited_images": 0,}}
+        user_chats[user_id_str] = {"history": [], "stats": {"messages": 0, "generated_images": 0, "edited_images": 0}}
     elif "stats" not in user_chats[user_id_str]:
-        user_chats[user_id_str]["stats"] = {"messages": 0, "generated_images": 0, "edited_images": 0,}
+        user_chats[user_id_str]["stats"] = {"messages": 0, "generated_images": 0, "edited_images": 0}
     if "history" not in user_chats[user_id_str]:
         user_chats[user_id_str]["history"] = []
 
@@ -75,14 +76,22 @@ async def load_user_chats_async():
 def _convert_chat_history_to_dicts(chat_session):
     history_list = []
     for content in chat_session.history:
-        is_tool_related = any(hasattr(p, 'function_call') or hasattr(p, 'function_response') for p in content.parts)
+        role = content.role
+        text_parts = []
+        is_tool_related = False
+        for part in content.parts:
+            if hasattr(part, 'text') and part.text:
+                text_parts.append(part.text)
+            if hasattr(part, 'function_call') or hasattr(part, 'function_response'):
+                is_tool_related = True
+                break
+        
         if is_tool_related:
             continue
-        if content.parts and all(hasattr(p, 'text') for p in content.parts):
-             role = content.role if content.role else "model"
-             parts = [{"text": part.text} for part in content.parts if hasattr(part, 'text')]
-             if parts:
-                 history_list.append({"role": role, "parts": parts})
+            
+        if text_parts:
+            history_list.append({"role": role, "parts": [{"text": " ".join(text_parts)}]})
+            
     return history_list
 
 async def daily_reset_stats():
@@ -109,9 +118,35 @@ def _get_tools_for_model(model_type):
         try:
             return [genai.Tool(google_search_retrieval={}), "code_execution"]
         except AttributeError:
-            print("!!! WARNING: genai.Tool not found. Your google-generativeai library is outdated. Update it for tools to work. !!!")
+            print("!!! WARNING: genai.Tool not found. Update google-generativeai library. !!!")
             return None
     return None
+
+async def _handle_response_streaming(response, sent_message, bot):
+    full_response = ""
+    last_update = time.time()
+    update_interval = conf["streaming_update_interval"]
+    try:
+        async for chunk in response:
+            try:
+                if hasattr(chunk, 'text') and chunk.text:
+                    full_response += chunk.text
+                    current_time = time.time()
+                    if current_time - last_update >= update_interval:
+                        await bot.edit_message_text(escape(full_response + "✍️"), chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
+                        last_update = current_time
+            except generation_types.StopCandidateException as e:
+                print(f"Streaming stopped with reason: {e.finish_reason}")
+                break
+            except ValueError as e:
+                if "finish_reason" in str(e):
+                    print(f"Streaming stopped with finish_reason: {e}")
+                    break
+                else: raise e
+    except Exception as e:
+        print(f"Error during streaming: {e}")
+        
+    return full_response
 
 async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str):
     random_configure()
@@ -122,46 +157,34 @@ async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str)
     try:
         history_dicts = user_chats[user_id_str]["history"]
         if not history_dicts and default_system_prompt:
-            try:
-                time_zone = timezone(timedelta(hours=3, minutes=30))
-                date = datetime.now(time_zone).strftime("%d/%m/%Y")
-                timenow = datetime.now(time_zone).strftime("%H:%M:%S")
-                time_prompt = f"**اطلاعات تاریخ و زمان:**\nتاریخ: {date}\nزمان: {timenow}"
-                full_prompt = default_system_prompt + "\n\n" + time_prompt
-                history_dicts.append({"role": "user", "parts": [{"text": full_prompt}]})
-                history_dicts.append({"role": "model", "parts": [{"text": "باشه، متوجه شدم."}]})
-                print(f"Default prompt added for user {user_id_str}")
-            except Exception as e:
-                print(f"Warning failed to add default prompt: {e}")
+            # Simplified default prompt logic
+            history_dicts.extend([
+                {"role": "user", "parts": [{"text": default_system_prompt}]},
+                {"role": "model", "parts": [{"text": "باشه، متوجه شدم."}]}
+            ])
+            print(f"Default prompt added for user {user_id_str}")
         
         tools_to_use = _get_tools_for_model(model_type)
         model = genai.GenerativeModel(model_name=model_type, tools=tools_to_use)
         chat = model.start_chat(history=history_dicts, enable_automatic_function_calling=bool(tools_to_use))
         
         sent_message = await bot.reply_to(message, before_generate_info)
-
-        if tools_to_use:
-            response = await chat.send_message_async(m, stream=False, safety_settings=safety_settings)
-            final_text = escape(response.text) if hasattr(response, 'text') and response.text else "پاسخی دریافت نشد."
-            await bot.edit_message_text(final_text, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
+        
+        stream_enabled = not bool(tools_to_use)
+        response = await chat.send_message_async(m, stream=stream_enabled, safety_settings=safety_settings)
+        
+        full_response = ""
+        if stream_enabled:
+            full_response = await _handle_response_streaming(response, sent_message, bot)
         else:
-            response = await chat.send_message_async(m, stream=True, safety_settings=safety_settings)
-            full_response = ""
-            last_update = time.time()
-            update_interval = conf["streaming_update_interval"]
-            async for chunk in response:
-                if hasattr(chunk, 'text') and chunk.text:
-                    full_response += chunk.text
-                    current_time = time.time()
-                    if current_time - last_update >= update_interval:
-                        try:
-                            await bot.edit_message_text(escape(full_response + "✍️"), chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
-                        except Exception as e:
-                            if "message is not modified" not in str(e).lower():
-                                 await bot.edit_message_text(full_response + "✍️", chat_id=sent_message.chat.id, message_id=sent_message.message_id)
-                        last_update = current_time
-            final_text = escape(full_response) if full_response else "پاسخی دریافت نشد."
-            await bot.edit_message_text(final_text, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
+            try:
+                full_response = response.text
+            except (ValueError, generation_types.StopCandidateException) as e:
+                 print(f"Response error (non-stream): {e}")
+                 full_response = ""
+
+        final_text = escape(full_response) if full_response else "پاسخی دریافت نشد. ممکن است درخواست شما به دلیل ایمنی مسدود شده باشد."
+        await bot.edit_message_text(final_text, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
         
         user_chats[user_id_str]["stats"]["messages"] += 1
         user_chats[user_id_str]["history"] = _convert_chat_history_to_dicts(chat)
@@ -185,37 +208,25 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
         image = Image.open(io.BytesIO(photo_file))
         tools_to_use = _get_tools_for_model(model_type)
         model = genai.GenerativeModel(model_name=model_type, tools=tools_to_use)
-        chat_contents = []
-        if default_image_processing_prompt:
-            chat_contents.append({"role": "user", "parts": [{"text": default_image_processing_prompt}]})
-            chat_contents.append({"role": "model", "parts": [{"text": "باشه، متوجه شدم."}]})
-        chat_contents.append({"role": "user", "parts": [m, image]})
-
+        
+        chat_contents = [{"role": "user", "parts": [m, image]}]
         if not sent_message:
             sent_message = await bot.reply_to(message, before_generate_info)
         
         stream_enabled = not bool(tools_to_use)
         response = await model.generate_content_async(chat_contents, stream=stream_enabled, safety_settings=safety_settings)
 
+        full_response = ""
         if stream_enabled:
-            full_response = ""
-            last_update = time.time()
-            update_interval = conf["streaming_update_interval"]
-            async for chunk in response:
-                if hasattr(chunk, 'text') and chunk.text:
-                    full_response += chunk.text
-                    current_time = time.time()
-                    if current_time - last_update >= update_interval:
-                        try:
-                            await bot.edit_message_text(escape(full_response + "✍️"), chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
-                        except Exception as e:
-                            if "message is not modified" not in str(e).lower():
-                                await bot.edit_message_text(full_response + "✍️", chat_id=sent_message.chat.id, message_id=sent_message.message_id)
-                        last_update = current_time
+            full_response = await _handle_response_streaming(response, sent_message, bot)
         else:
-            full_response = response.text
-
-        final_text = escape(full_response) if full_response else "پاسخی دریافت نشد."
+            try:
+                full_response = response.text
+            except (ValueError, generation_types.StopCandidateException) as e:
+                print(f"Response error (image, non-stream): {e}")
+                full_response = ""
+        
+        final_text = escape(full_response) if full_response else "پاسخی دریافت نشد. ممکن است به دلیل ایمنی مسدود شده باشد."
         await bot.edit_message_text(final_text, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
         user_chats[user_id_str]["stats"]["messages"] += 1
         asyncio.create_task(save_user_chats())
@@ -223,10 +234,8 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
     except Exception as e:
         traceback.print_exc()
         error_message_detail = f"{error_info}\nجزئیات خطا: {str(e)}"
-        if sent_message:
-            await bot.edit_message_text(error_message_detail, chat_id=sent_message.chat.id, message_id=sent_message.message_id)
-        else:
-            await bot.reply_to(message, error_message_detail)
+        if sent_message: await bot.edit_message_text(error_message_detail, chat_id=sent_message.chat.id, message_id=sent_message.message_id)
+        else: await bot.reply_to(message, error_message_detail)
 
 async def gemini_process_voice(bot: TeleBot, message: Message, voice_file: bytes, model_type: str):
     random_configure()
@@ -238,31 +247,19 @@ async def gemini_process_voice(bot: TeleBot, message: Message, voice_file: bytes
         prompt = "این پیام صوتی را به دقت به متن تبدیل کن و سپس به محتوای آن به طور کامل پاسخ بده."
         model = genai.GenerativeModel(model_name=model_type)
         response = await model.generate_content_async([prompt, {"mime_type": "audio/ogg", "data": voice_file}], stream=True, safety_settings=safety_settings)
-        full_response = ""
-        last_update = time.time()
-        update_interval = conf["streaming_update_interval"]
-        async for chunk in response:
-            if hasattr(chunk, 'text') and chunk.text:
-                full_response += chunk.text
-                current_time = time.time()
-                if current_time - last_update >= update_interval:
-                    try:
-                        await bot.edit_message_text(escape(full_response + "✍️"), chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
-                    except Exception as e:
-                        if "message is not modified" not in str(e).lower():
-                            await bot.edit_message_text(full_response + "✍️", chat_id=sent_message.chat.id, message_id=sent_message.message_id)
-                    last_update = current_time
+        
+        full_response = await _handle_response_streaming(response, sent_message, bot)
+        
         final_text = escape(full_response) if full_response else "پاسخی برای این پیام صوتی دریافت نشد."
         await bot.edit_message_text(final_text, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
+        
         user_chats[user_id_str]["stats"]["messages"] += 1
         asyncio.create_task(save_user_chats())
     except Exception as e:
         traceback.print_exc()
         error_message_detail = f"{error_info}\nجزئیات خطا: {str(e)}"
-        if sent_message:
-            await bot.edit_message_text(error_message_detail, chat_id=sent_message.chat.id, message_id=sent_message.message_id)
-        else:
-            await bot.reply_to(message, error_message_detail)
+        if sent_message: await bot.edit_message_text(error_message_detail, chat_id=sent_message.chat.id, message_id=sent_message.message_id)
+        else: await bot.reply_to(message, error_message_detail)
 
 async def gemini_draw(bot: TeleBot, message: Message, m: str):
     client = get_random_client()
