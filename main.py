@@ -34,7 +34,7 @@ options = Options(TG_TOKEN_PROVIDED)
 async def run_bot():
     handlers.clear_updates(TG_TOKEN_PROVIDED)
     await gemini.load_user_chats_async()
-    asyncio.create_task(gemini.daily_reset_stats()
+    asyncio.create_task(gemini.daily_reset_stats())
     bot = AsyncTeleBot(options.tg_token)
 
     await bot.delete_my_commands(scope=None, language_code=None)
