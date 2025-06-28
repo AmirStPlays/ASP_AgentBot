@@ -166,24 +166,33 @@ async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str)
     sent_message = None
     user_id_str = str(message.from_user.id)
     _initialize_user(user_id_str)
+    user = message.from_user
+    first_name = user.first_name or "کاربر"
+
+    time_zone = timezone(timedelta(hours=3, minutes=30))
+    date = datetime.now(time_zone).strftime("%d/%m/%Y")
+    timenow = datetime.now(time_zone).strftime("%H:%M:%S")
+    time_prompt = f"اطلاعات تاریخ و زمان:\nتاریخ: {date}\nزمان: {timenow}"
+    user_prompt = f"نام کاربر: {first_name}"
+    system_prompt = f"{user_prompt}\n{time_prompt}"
 
     try:
         history_dicts = user_chats[user_id_str]["history"]
         if not history_dicts and default_system_prompt:
             history_dicts.extend([
-                {"role": "user", "parts": [{"text": default_system_prompt}]},
+                {"role": "user", "parts": [{"text": system_prompt + "\n" + default_system_prompt}]},
                 {"role": "model", "parts": [{"text": "باشه، متوجه شدم."}]}
             ])
-        
+
         tools_to_use = _get_tools_for_model(model_type)
         model = genai.GenerativeModel(model_name=model_type, tools=tools_to_use, safety_settings=safety_settings)
         chat = model.start_chat(history=history_dicts, enable_automatic_function_calling=bool(tools_to_use))
-        
+
         sent_message = await bot.reply_to(message, before_generate_info)
-        
+
         stream_enabled = not bool(tools_to_use)
         response = await chat.send_message_async(m, stream=stream_enabled)
-        
+
         full_response = ""
         if stream_enabled:
             full_response = await _handle_response_streaming(response, sent_message, bot)
@@ -191,16 +200,14 @@ async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str)
             try:
                 full_response = response.text
             except (ValueError, generation_types.StopCandidateException) as e:
-                 print(f"Response error (non-stream): {e}")
-                 full_response = ""
-        
+                print(f"Response error (non-stream): {e}")
+                full_response = ""
+
         final_text = escape(full_response) if full_response else "پاسخی دریافت نشد. (احتمالاً به دلیل فیلتر ایمنی)"
         await bot.edit_message_text(final_text, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
-        
+
         user_chats[user_id_str]["stats"]["messages"] += 1
-        # Store a clean, savable version of the history
         user_chats[user_id_str]["history_for_saving"] = _convert_chat_history_to_dicts(chat)
-        # Keep the full history object in memory for the next turn
         user_chats[user_id_str]["history"] = chat.history
         asyncio.create_task(save_user_chats())
 
@@ -212,34 +219,34 @@ async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str)
         else:
             await bot.reply_to(message, error_message_detail)
 
-# --- START: MODIFIED FUNCTION ---
 async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, photo_file: bytes, model_type: str, status_message: Message = None):
-    """
-    Handles image processing with conversation history.
-    """
     random_configure()
     user_id_str = str(message.from_user.id)
     _initialize_user(user_id_str)
     sent_message = status_message
-    
+    user = message.from_user
+    first_name = user.first_name or "کاربر"
+
+    time_zone = timezone(timedelta(hours=3, minutes=30))
+    date = datetime.now(time_zone).strftime("%d/%m/%Y")
+    timenow = datetime.now(time_zone).strftime("%H:%M:%S")
+    time_prompt = f"اطلاعات تاریخ و زمان:\nتاریخ: {date}\nزمان: {timenow}"
+    user_prompt = f"نام کاربر: {first_name}"
+    system_prompt = f"{user_prompt}\n{time_prompt}"
+
     try:
         image = Image.open(io.BytesIO(photo_file))
         tools_to_use = _get_tools_for_model(model_type)
         model = genai.GenerativeModel(model_name=model_type, tools=tools_to_use, safety_settings=safety_settings)
-        
-        # --- MEMORY IMPLEMENTATION ---
-        # Get previous text-based history
+
         history_dicts = user_chats[user_id_str].get("history", [])
-        
-        # Create the new user message with both text and image
-        user_message_part = {"role": "user", "parts": [m, image]}
-        
-        # Combine history with the new message
+
+        user_message_part = {"role": "user", "parts": [system_prompt + "\n" + m, image]}
         chat_contents = history_dicts + [user_message_part]
-        
+
         if not sent_message:
             sent_message = await bot.reply_to(message, before_generate_info)
-        
+
         stream_enabled = not bool(tools_to_use)
         response = await model.generate_content_async(chat_contents, stream=stream_enabled)
 
@@ -252,17 +259,13 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
             except (ValueError, generation_types.StopCandidateException) as e:
                 print(f"Response error (image, non-stream): {e}")
                 full_response = ""
-        
+
         final_text = escape(full_response) if full_response else "پاسخی دریافت نشد. (احتمالاً به دلیل فیلتر ایمنی)"
         await bot.edit_message_text(final_text, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
-        
-        # --- HISTORY UPDATE ---
-        # Add user's new message (text part only for saving) and model's response to history
+
         model_response_part = {"role": "model", "parts": [{"text": full_response}]}
-        # For saving, we only keep the text part of the user's message
         user_message_part_for_saving = {"role": "user", "parts": [{"text": m}]}
-        
-        # Update the history in memory
+
         user_chats[user_id_str]["history"].extend([user_message_part_for_saving, model_response_part])
         user_chats[user_id_str]["stats"]["messages"] += 1
         asyncio.create_task(save_user_chats())
@@ -270,48 +273,64 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
     except Exception as e:
         traceback.print_exc()
         error_message_detail = f"{error_info}\nجزئیات خطا: {str(e)}"
-        if sent_message: await bot.edit_message_text(error_message_detail, chat_id=sent_message.chat.id, message_id=sent_message.message_id)
-        else: await bot.reply_to(message, error_message_detail)
-# --- END: MODIFIED FUNCTION ---
+        if sent_message:
+            await bot.edit_message_text(error_message_detail, chat_id=sent_message.chat.id, message_id=sent_message.message_id)
+        else:
+            await bot.reply_to(message, error_message_detail)
 
-# --- START: MODIFIED FUNCTION ---
+from datetime import datetime, timezone, timedelta, time as dt_time
+
 async def gemini_process_voice(bot: TeleBot, message: Message, voice_file: bytes, model_type: str):
-    """
-    Transcribes voice messages to text and returns it in a monospace block.
-    """
     random_configure()
     user_id_str = str(message.from_user.id)
     _initialize_user(user_id_str)
     sent_message = None
+    user = message.from_user
+    first_name = user.first_name or "کاربر"
+
+    time_zone = timezone(timedelta(hours=3, minutes=30))
+    date = datetime.now(time_zone).strftime("%d/%m/%Y")
+    timenow = datetime.now(time_zone).strftime("%H:%M:%S")
+    time_prompt = f"اطلاعات تاریخ و زمان:\nتاریخ: {date}\nزمان: {timenow}"
+    user_prompt = f"نام کاربر: {first_name}"
+    system_prompt = f"{user_prompt}\n{time_prompt}"
+
     try:
         sent_message = await bot.reply_to(message, "در حال تبدیل ویس به متن... 🎤")
-        # --- MODIFIED PROMPT ---
-        # This new prompt asks the model ONLY to transcribe the audio.
-        prompt = "فقط این پیام صوتی را به متن تبدیل کن. هیچ چیز اضافه‌ای ننویس."
+
+        prompt = (
+            f"{system_prompt}\n"
+            "لطفاً فقط متن دقیق گفته‌شده در فایل صوتی زیر را بدون هیچ توضیح یا اصلاحی بنویس.\n"
+            "ممکن است زبان گفتار فارسی، انگلیسی یا ترکیبی باشد، بنابراین با دقت همان را بازنویسی کن.\n"
+        )
+
         model = genai.GenerativeModel(model_name=model_type, safety_settings=safety_settings)
-        # Using a non-streaming call is simpler for transcription
-        response = await model.generate_content_async([prompt, {"mime_type": "audio/ogg", "data": voice_file}])
-        
+        response = await model.generate_content_async([
+            {"text": prompt},
+            {"mime_type": "audio/ogg", "data": voice_file}
+        ])
+
         transcribed_text = response.text.strip() if response.text else "متنی از این پیام صوتی تشخیص داده نشد."
-        
-        # --- MODIFIED OUTPUT FORMAT ---
-        # Format the output as a monospace block for easy copying.
+        transcribed_text = escape(transcribed_text)
+
         final_text = f"```\n{transcribed_text}\n```"
         await bot.edit_message_text(final_text, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
-        
-        # Note: We are NOT updating message stats or history for this action,
-        # as it's a utility (transcription) not a conversation turn.
 
     except Exception as e:
         traceback.print_exc()
         error_message_detail = f"{error_info}\nجزئیات خطا: {str(e)}"
-        if sent_message: await bot.edit_message_text(error_message_detail, chat_id=sent_message.chat.id, message_id=sent_message.message_id)
-        else: await bot.reply_to(message, error_message_detail)
-# --- END: MODIFIED FUNCTION ---
+        if sent_message:
+            await bot.edit_message_text(error_message_detail, chat_id=sent_message.chat.id, message_id=sent_message.message_id)
+        else:
+            await bot.reply_to(message, error_message_detail)
+
+
 
 async def gemini_draw(bot: TeleBot, message: Message, m: str):
     client = get_random_client()
     image_generation_chat = client.aio.chats.create(model=model_3, config=generation_config)
+    user_id_str = str(message.from_user.id)
+    _initialize_user(user_id_str)
 
     try:
         response = await image_generation_chat.send_message(m)
@@ -344,11 +363,16 @@ async def gemini_draw(bot: TeleBot, message: Message, m: str):
     if not processed_parts:
         await bot.send_message(message.chat.id, "تصویری تولید نشد یا محتوای قابل نمایشی وجود نداشت.")
 
+    user_chats[user_id_str]["stats"]["generated_images"] = user_chats[user_id_str]["stats"].get("generated_images", 0) + 1
+    asyncio.create_task(save_user_chats())
+
+
 
 async def gemini_edit(bot: TeleBot, message: Message, m: str, photo_file: bytes):
     image = Image.open(io.BytesIO(photo_file))
     client = get_random_client()
     user_id_str = str(message.from_user.id)
+    _initialize_user(user_id_str)
     chat = user_chats.get(user_id_str)
 
     if not chat:
@@ -390,6 +414,9 @@ async def gemini_edit(bot: TeleBot, message: Message, m: str, photo_file: bytes)
 
         if not processed_parts:
             await bot.send_message(message.chat.id, "پاسخی از مدل دریافت نشد یا محتوای قابل نمایشی وجود نداشت.")
+
+        user_chats[user_id_str]["stats"]["edited_images"] = user_chats[user_id_str]["stats"].get("edited_images", 0) + 1
+        asyncio.create_task(save_user_chats())
 
     except Exception as e:
         traceback.print_exc()
