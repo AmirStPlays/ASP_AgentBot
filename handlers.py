@@ -156,7 +156,7 @@ async def start(message: Message, bot: TeleBot) -> None:
             message,
             welcome_message,
             parse_mode="MarkdownV2",
-            reply_markup=ReplyKeyboardRemove()
+            reply_markup=types.ReplyKeyboardRemove()
         )
     except Exception as e:
         traceback.print_exc()
