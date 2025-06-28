@@ -148,20 +148,19 @@ async def start(message: Message, bot: TeleBot) -> None:
         user = message.from_user
         first_name = user.first_name or "کاربر"
 
-        welcome_message = (
-            f"سلام {escape(first_name)}\n"
-            f"به ایجنت *ASP* خوش اومدی.\n"
-            f"{escape(pm['welcome'])}"
-        )
+        text = f"سلام {first_name}\nبه ایجنت ASP خوش اومدی.\n{pm['welcome']}"
+        escaped_text = escape(text)
+
         await bot.reply_to(
             message,
-            welcome_message,
+            escaped_text,
             parse_mode="MarkdownV2",
             reply_markup=ReplyKeyboardRemove()
         )
     except Exception as e:
         traceback.print_exc()
         await bot.reply_to(message, error_info)
+
 
 @pre_command_checks
 async def clear(message: Message, bot: TeleBot) -> None:
