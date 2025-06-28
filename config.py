@@ -17,7 +17,7 @@ conf = {
     "model_1":              "gemini-2.5-flash",
     "model_2":              "gemini-2.0-flash-thinking-exp",
     "model_3":              "gemini-2.0-flash-preview-image-generation",
-    "streaming_update_interval": 0.6,
+    "streaming_update_interval": 0.8,
     "default_system_prompt": full_prompt,
     "default_image_processing_prompt": default_image_processing_prompt,
     "persian_messages": {
