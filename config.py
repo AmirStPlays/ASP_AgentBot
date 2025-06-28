@@ -21,7 +21,7 @@ conf = {
     "default_system_prompt": full_prompt,
     "default_image_processing_prompt": default_image_processing_prompt,
     "persian_messages": {
-        "welcome": "به ایجنت ASP خوش آمدید.\nمیتوانید از دستور های ربات استفاده کنید و یا پیام خودتون رو بفرستید.\nدر صورت نیاز /help را بزنید.",
+        "welcome": "\nمیتوانید از دستور های ربات استفاده کنید و یا پیام خودتون رو بفرستید.\nدر صورت نیاز /help را بزنید.",
         "add_prompt_gemini": "لطفاً متن سوال خود را بعد از دستور /gemini بنویسید.\nبرای مثال: `/gemini جان لنون کیست؟`",
         "add_prompt_gemini_pro": "لطفاً متن سوال خود را بعد از دستور /gemini_pro بنویسید.\nبرای مثال: `/gemini_pro جان لنون کیست؟`",
         "history_cleared": "تاریخچه شما پاک شد.",
