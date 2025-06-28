@@ -97,34 +97,42 @@ async def show_help(message: Message, bot: TeleBot):
     title = "راهنمای جامع استفاده از بات"
     img_description_raw = """برای تولید عکس توسط ربات ابتدا این دستور را از طریق منوی پایین چپ نگه داشته تا عبارت آن بر روی کیبورد نمایان بشه.
 پس از این متن خودتون رو جلوی دستور برای ساخت عکس بنویسید.
-این رو هم بدونید که ممکنه این عملیات زمانبر باشه """
-    edit_description_raw = """برای اینکار یا یک عکس از گالری خود و یا یک عکس از تاریخچه چتتون انتخاب کنید(روی پیامش ریپلای بزنید)
+این رو هم بدونید که ممکنه این عملیات زمانبر باشه"""
+    edit_description_raw = """برای اینکار یا یک عکس از گالری خود و یا یک عکس از تاریخچه چتتون انتخاب کنید (روی پیامش ریپلای بزنید)
 بعد از اینکار مثل دستور قبل عبارت /edit را پشت کپشن یا پیام ریپلای زده شده خودتون بنویسین و ادیتی که میخواین روی عکس اعمال بشه رو تایپ کنید.
 این عملیات هم میتونه کمی زمانبر باشه."""
-    switch_description_raw = "با استفاده از این دستور میتونین مدل پردازش متن رو عوض کنید "
-    help_description_raw = "برای دیدن راهنمای استفاده از بات از این دستور استفاده کنید "
-    group_text_raw = "در گروه ها، برای اینکه ربات به پیام متنی شما پاسخ دهد، پیام خود را با `.` شروع کنید. مثال: `.سلام خوبی؟`"
-    group_image_raw = "در گروه ها، برای پردازش یک عکس (مثلاً توصیف آن)، کپشن عکس را با `.` شروع کنید. مثال: `.این عکس چیست؟`"
+    switch_description_raw = "با استفاده از این دستور میتونین مدل پردازش متن رو عوض کنید"
+    help_description_raw = "برای دیدن راهنمای استفاده از بات از این دستور استفاده کنید"
+    group_text_raw = "در گروه‌ها، برای اینکه ربات به پیام متنی شما پاسخ دهد، پیام خود را با `.` شروع کنید. مثال: `.سلام خوبی؟`"
+    group_image_raw = "در گروه‌ها، برای پردازش یک عکس (مثلاً توصیف آن)، کپشن عکس را با `.` شروع کنید. مثال: `.این عکس چیست؟`"
     footer_raw = "در صورت داشتن هرگونه ابهام یا مشکل در ربات حتما به من بگید تا درستش کنم"
     admin_id_raw = "اینم آیدیم: @AmirStPlays"
 
     help_text = f"*{escape(title)}*\n\n"
-    help_text += f"{mono('/img')} {escape('(تولید تصویر')})\n"
-    help_text += "```\n" + escape(img_description_raw) + "\n```\n\n"
-    help_text += f"{mono('/edit')} {escape('(ویرایش تصویر با ریپلای')})\n"
-    help_text += "```\n" + escape(edit_description_raw) + "\n```\n\n"
-    help_text += f"{mono('/switch')} {escape('(تغییر مدل متن در چت خصوصی')})\n"
-    help_text += "```\n" + escape(switch_description_raw) + "\n```\n\n"
-    help_text += f"{mono('/help')} {escape('(همین راهنما')})\n"
-    help_text += "```\n" + escape(help_description_raw) + "\n```\n\n"
-    help_text += escape("5. استفاده در گروه (متن)") + "\n"
-    help_text += "```\n" + escape(group_text_raw) + "\n```\n\n"
-    help_text += escape("6. استفاده در گروه (عکس)") + "\n"
-    help_text += "```\n" + escape(group_image_raw) + "\n```\n\n"
-    help_text += escape(footer_raw) + "\n"
-    help_text += escape(admin_id_raw)
+
+    help_text += f"{mono('/img')} {escape('(تولید تصویر)')}\n"
+    help_text += f"```\n{escape(img_description_raw)}\n```\n\n"
+
+    help_text += f"{mono('/edit')} {escape('(ویرایش تصویر با ریپلای)')}\n"
+    help_text += f"```\n{escape(edit_description_raw)}\n```\n\n"
+
+    help_text += f"{mono('/switch')} {escape('(تغییر مدل متن در چت خصوصی)')}\n"
+    help_text += f"```\n{escape(switch_description_raw)}\n```\n\n"
+
+    help_text += f"{mono('/help')} {escape('(همین راهنما)')}\n"
+    help_text += f"```\n{escape(help_description_raw)}\n```\n\n"
+
+    help_text += f"{escape('5. استفاده در گروه (متن)')}\n"
+    help_text += f"```\n{escape(group_text_raw)}\n```\n\n"
+
+    help_text += f"{escape('6. استفاده در گروه (عکس)')}\n"
+    help_text += f"```\n{escape(group_image_raw)}\n```\n\n"
+
+    help_text += f"{escape(footer_raw)}\n"
+    help_text += f"{escape(admin_id_raw)}"
 
     await bot.reply_to(message, help_text, parse_mode="MarkdownV2")
+
 
 @pre_command_checks
 async def show_info(message: Message, bot: TeleBot):
