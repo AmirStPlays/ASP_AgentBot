@@ -88,9 +88,41 @@ def pre_command_checks(func):
         return await func(message, bot, *args, **kwargs)
     return wrapper
 
-@pre_command_checks
-async def show_help(message: Message, bot: TeleBot):
-    help_text = "راهنمای جامع..."
+
+def mono(text: str) -> str:
+    return f"\\`{escape(text)}\\`"
+
+async def show_help(message: Message, bot: AsyncTeleBot):
+    title = "راهنمای جامع استفاده از بات"
+    img_description_raw = """برای تولید عکس توسط ربات ابتدا این دستور را از طریق منوی پایین چپ نگه داشته تا عبارت آن بر روی کیبورد نمایان بشه.
+پس از این متن خودتون رو جلوی دستور برای ساخت عکس بنویسید.
+این رو هم بدونید که ممکنه این عملیات زمانبر باشه """
+    edit_description_raw = """برای اینکار یا یک عکس از گالری خود و یا یک عکس از تاریخچه چتتون انتخاب کنید(روی پیامش ریپلای بزنید)
+بعد از اینکار مثل دستور قبل عبارت /edit را پشت کپشن یا پیام ریپلای زده شده خودتون بنویسین و ادیتی که میخواین روی عکس اعمال بشه رو تایپ کنید.
+این عملیات هم میتونه کمی زمانبر باشه."""
+    switch_description_raw = "با استفاده از این دستور میتونین مدل پردازش متن رو عوض کنید "
+    help_description_raw = "برای دیدن راهنمای استفاده از بات از این دستور استفاده کنید "
+    group_text_raw = "در گروه ها، برای اینکه ربات به پیام متنی شما پاسخ دهد، پیام خود را با `.` شروع کنید. مثال: `.سلام خوبی؟`"
+    group_image_raw = "در گروه ها، برای پردازش یک عکس (مثلاً توصیف آن)، کپشن عکس را با `.` شروع کنید. مثال: `.این عکس چیست؟`"
+    footer_raw = "در صورت داشتن هرگونه ابهام یا مشکل در ربات حتما به من بگید تا درستش کنم"
+    admin_id_raw = "اینم آیدیم: @AmirStPlays"
+
+    help_text = f"*{escape(title)}*\n\n"
+    help_text += f"{mono('/img')} {escape('(تولید تصویر')})\n"
+    help_text += "```\n" + escape(img_description_raw) + "\n```\n\n"
+    help_text += f"{mono('/edit')} {escape('(ویرایش تصویر با ریپلای')})\n"
+    help_text += "```\n" + escape(edit_description_raw) + "\n```\n\n"
+    help_text += f"{mono('/switch')} {escape('(تغییر مدل متن در چت خصوصی')})\n"
+    help_text += "```\n" + escape(switch_description_raw) + "\n```\n\n"
+    help_text += f"{mono('/help')} {escape('(همین راهنما')})\n"
+    help_text += "```\n" + escape(help_description_raw) + "\n```\n\n"
+    help_text += escape("5. استفاده در گروه (متن)") + "\n"
+    help_text += "```\n" + escape(group_text_raw) + "\n```\n\n"
+    help_text += escape("6. استفاده در گروه (عکس)") + "\n"
+    help_text += "```\n" + escape(group_image_raw) + "\n```\n\n"
+    help_text += escape(footer_raw) + "\n"
+    help_text += escape(admin_id_raw)
+
     await bot.reply_to(message, help_text, parse_mode="MarkdownV2")
 
 @pre_command_checks
@@ -109,10 +141,23 @@ async def show_info(message: Message, bot: TeleBot):
     info_text_raw = (f"📊 *آمار استفاده شما* 📊\n\n💬 *کل پیام‌ها:* {messages}\n🎨 *تصاویر ساخته شده امروز:* {generated_images}\n🖼️ *تصاویر ویرایش شده امروز:* {edited_images}\n\n__آمار تصویر روزانه ریست می‌شود.__")
     await bot.reply_to(message, escape(info_text_raw), parse_mode="MarkdownV2")
 
-@pre_command_checks
+
 async def start(message: Message, bot: TeleBot) -> None:
     try:
-        await bot.reply_to(message , escape(pm["welcome"]), parse_mode="MarkdownV2", reply_markup=telebot_types.ReplyKeyboardRemove())
+        user = message.from_user
+        first_name = user.first_name or "کاربر"
+
+        welcome_message = (
+            f"سلام {escape(first_name)}\n"
+            f"به ایجنت *ASP* خوش اومدی.\n"
+            f"{escape(pm['welcome'])}"
+        )
+        await bot.reply_to(
+            message,
+            welcome_message,
+            parse_mode="MarkdownV2",
+            reply_markup=ReplyKeyboardRemove()
+        )
     except Exception as e:
         traceback.print_exc()
         await bot.reply_to(message, error_info)
