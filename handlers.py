@@ -1,5 +1,6 @@
 from functools import wraps
 from telebot import TeleBot, types as telebot_types
+from telebot.types import ReplyKeyboardRemove
 import requests
 from telebot.types import Message
 from md2tgmd import escape
@@ -156,7 +157,7 @@ async def start(message: Message, bot: TeleBot) -> None:
             message,
             welcome_message,
             parse_mode="MarkdownV2",
-            reply_markup=types.ReplyKeyboardRemove()
+            reply_markup=ReplyKeyboardRemove()
         )
     except Exception as e:
         traceback.print_exc()
