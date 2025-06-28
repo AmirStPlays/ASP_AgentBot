@@ -92,7 +92,7 @@ def pre_command_checks(func):
 def mono(text: str) -> str:
     return f"\\`{escape(text)}\\`"
 
-async def show_help(message: Message, bot: AsyncTeleBot):
+async def show_help(message: Message, bot: TeleBot):
     title = "راهنمای جامع استفاده از بات"
     img_description_raw = """برای تولید عکس توسط ربات ابتدا این دستور را از طریق منوی پایین چپ نگه داشته تا عبارت آن بر روی کیبورد نمایان بشه.
 پس از این متن خودتون رو جلوی دستور برای ساخت عکس بنویسید.
