@@ -1,4 +1,8 @@
 from google.genai import types
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
 
 with open("default_prompt.txt", "r", encoding="utf-8") as f:
     full_prompt = f.read()
@@ -45,7 +49,7 @@ conf = {
 }
 
 
-CHANNEL_USERNAME = "@ASP_bot_collection" # your chanel username
+CHANNEL_USERNAME = os.getenv("tg_channel_username")
 
 
 safety_settings = [
