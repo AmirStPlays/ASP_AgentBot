@@ -10,7 +10,6 @@ from config import conf, safety_settings, generation_config
 from datetime import datetime, timezone, timedelta, time as dt_time
 import google.generativeai as genai
 from google import genai as genai1
-from google.generativeai import types
 from google.generativeai.types import generation_types
 import os
 from dotenv import load_dotenv
@@ -55,22 +54,18 @@ def _initialize_user(user_id_str):
 async def save_user_chats():
     async with _save_lock:
         try:
-            # Create a history-only copy for saving to avoid saving complex objects
             save_data = {}
             for uid, data in user_chats.items():
                 save_data[uid] = {
                     "history": [],
                     "stats": data.get("stats", {"messages": 0, "generated_images": 0, "edited_images": 0})
                 }
-                if "history_for_saving" in data: # a temporary key to hold clean history
+                if "history_for_saving" in data:
                      save_data[uid]["history"] = data["history_for_saving"]
-                elif "history" in data: # fallback to old way if needed
-                    # This part cleans history from non-serializable objects like images
+                elif "history" in data:
                     clean_history = []
                     for item in data["history"]:
-                        # Ensure item is a dict and has 'parts'
                         if isinstance(item, dict) and 'parts' in item and isinstance(item['parts'], list):
-                             # Filter out non-text parts for saving
                             text_parts = [p['text'] for p in item['parts'] if isinstance(p, dict) and 'text' in p]
                             if text_parts:
                                 clean_history.append({
@@ -133,14 +128,9 @@ async def daily_reset_stats():
         print("Daily stat reset complete.")
         await asyncio.sleep(1)
 
-
 def _get_tools_for_model(model_type):
     if model_type in MODELS_WITH_TOOLS:
-        return [types.Tool(
-            google_search_retrieval=types.GoogleSearchRetrieval(
-                disable_attribution=False
-            )
-        )]
+        return ['google_search']
     return None
 
 
@@ -189,10 +179,11 @@ async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str)
 
         tools_to_use = _get_tools_for_model(model_type)
         model = genai.GenerativeModel(model_name=model_type, tools=tools_to_use, safety_settings=safety_settings)
-        chat = model.start_chat(history=history_dicts, enable_automatic_function_calling=bool(tools_to_use))
+        chat = model.start_chat(history=history_dicts) 
 
         sent_message = await bot.reply_to(message, before_generate_info)
 
+        # ابزار جستجو استریمینگ را غیرفعال می‌کند، پس باید جداگانه مدیریت شود
         stream_enabled = not bool(tools_to_use)
         response = await chat.send_message_async(m, stream=stream_enabled)
 
@@ -243,10 +234,13 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
         
         history_dicts = user_chats[user_id_str].get("history", [])
         user_message_part = {"role": "user", "parts": [full_prompt_text, image]}
+        
         chat_contents = history_dicts + [user_message_part]
 
         if not sent_message:
             sent_message = await bot.reply_to(message, before_generate_info)
+        
+        
         stream_enabled = not bool(tools_for_image_processing)
         response = await model.generate_content_async(chat_contents, stream=stream_enabled)
 
@@ -266,8 +260,9 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
 
         await bot.edit_message_text(final_text, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
 
+        # تاریخچه را به صورت دستی آپدیت می‌کنیم
         model_response_part = {"role": "model", "parts": [{"text": full_response}]}
-        user_chats[user_id_str]["history"].extend([{"role": "user", "parts": [{"text": full_prompt_text}]}, model_response_part])
+        user_chats[user_id_str]["history"].extend([user_message_part, model_response_part])
         user_chats[user_id_str]["stats"]["messages"] += 1
         asyncio.create_task(save_user_chats())
 
