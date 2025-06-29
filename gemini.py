@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 import os
 from telebot.types import Message
 import google.generativeai as genai
+from google import genai as genai1
 from google.generativeai.types import generation_types
 from md2tgmd import escape
 from config import conf, safety_settings, generation_config
