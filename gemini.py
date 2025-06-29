@@ -245,6 +245,7 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
         chat_contents = history_dicts + [user_message_part]
 
         if not sent_message:
+            
             sent_message = await bot.reply_to(message, before_generate_info)
 
         stream_enabled = not bool(tools_to_use)
@@ -252,6 +253,7 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
 
         full_response = ""
         if stream_enabled:
+            
             full_response = await _handle_response_streaming(response, sent_message, bot)
         else:
             try:
@@ -260,7 +262,10 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
                 print(f"Response error (image, non-stream): {e}")
                 full_response = ""
 
+        
         final_text = escape(full_response) if full_response else "پاسخی دریافت نشد. (احتمالاً به دلیل فیلتر ایمنی)"
+        
+        
         await bot.edit_message_text(final_text, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
 
         model_response_part = {"role": "model", "parts": [{"text": full_response}]}
@@ -273,12 +278,12 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
     except Exception as e:
         traceback.print_exc()
         error_message_detail = f"{error_info}\nجزئیات خطا: {str(e)}"
+        final_error_message = escape(error_message_detail)
+        
         if sent_message:
-            await bot.edit_message_text(error_message_detail, chat_id=sent_message.chat.id, message_id=sent_message.message_id)
+            await bot.edit_message_text(final_error_message, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
         else:
-            await bot.reply_to(message, error_message_detail)
-
-from datetime import datetime, timezone, timedelta, time as dt_time
+            await bot.reply_to(message, final_error_message, parse_mode="MarkdownV2")
 
 async def gemini_process_voice(bot: TeleBot, message: Message, voice_file: bytes, model_type: str):
     random_configure()
