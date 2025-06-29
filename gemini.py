@@ -130,8 +130,9 @@ async def daily_reset_stats():
 
 def _get_tools_for_model(model_type):
     if model_type in MODELS_WITH_TOOLS:
-        return ['google_search']
+        return ['google_search_retrieval', 'code_execution']
     return None
+
 
 
 async def _handle_response_streaming(response, sent_message, bot):
