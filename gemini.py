@@ -134,12 +134,9 @@ async def daily_reset_stats():
 
 def _get_tools_for_model(model_type):
     if model_type in MODELS_WITH_TOOLS:
-        try:
-            return [genai.Tool(google_search_retrieval={}), "code_execution"]
-        except AttributeError:
-            print("!!! WARNING: genai.Tool not found. Update google-generativeai library. !!!")
-            return None
+        return ["google_search_retrieval"]
     return None
+
 
 async def _handle_response_streaming(response, sent_message, bot):
     full_response = ""
@@ -253,7 +250,7 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
         else:
             try:
                 full_response = response.text
-            except (ValueError, generation_types.StopCandidateException):
+            except Exception:
                 full_response = ""
 
         if full_response:
@@ -262,8 +259,8 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
         else:
             final_text = escape("پاسخی دریافت نشد. (احتمالاً به دلیل فیلتر ایمنی)")
 
-        await bot.edit_message_text(final_text, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
-        
+        await bot.edit_message_text(escape(final_text), chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
+
         model_response_part = {"role": "model", "parts": [{"text": full_response}]}
         user_chats[user_id_str]["history"].extend([user_message_part, model_response_part])
         user_chats[user_id_str]["stats"]["messages"] += 1
@@ -273,11 +270,12 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
         traceback.print_exc()
         error_message_detail = f"{error_info}\nجزئیات خطا: {str(e)}"
         final_error_message = escape(error_message_detail)
-        
+
         if sent_message:
             await bot.edit_message_text(final_error_message, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
         else:
             await bot.reply_to(message, final_error_message, parse_mode="MarkdownV2")
+
 
 async def gemini_process_voice(bot: TeleBot, message: Message, voice_file: bytes, model_type: str):
     random_configure()
