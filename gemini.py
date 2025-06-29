@@ -1,21 +1,21 @@
-import io
-import time
-import traceback
 import random
-from PIL import Image
-from telebot.types import Message
-from md2tgmd import escape
-from telebot import TeleBot
-from config import conf, safety_settings, generation_config
-from datetime import datetime, timezone, timedelta, time as dt_time
-import google.generativeai as genai
-from google import genai as genai1
-from google.generativeai.types import generation_types
-import os
-from dotenv import load_dotenv
-import json
-import aiofiles
+import io
+import traceback
 import asyncio
+from datetime import datetime, timezone, timedelta
+from PIL import Image
+from telebot import TeleBot
+from telebot.types import Message
+import google.generativeai as genai
+from google.generativeai import generation_types
+from md2tgmd import escape
+from config import conf, safety_settings, generation_config
+
+
+PRO_MODELS = {
+    conf["model_1"],
+    conf["model_2"],
+
 
 model_1 = conf["model_1"]
 model_2 = conf["model_2"]
@@ -26,7 +26,11 @@ download_pic_notify = conf["download_pic_notify"]
 default_system_prompt = conf.get("default_system_prompt", "").strip()
 default_image_processing_prompt = conf.get("default_image_processing_prompt", "")
 
-MODELS_WITH_TOOLS = {conf["model_1"], conf["model_2"]}
+SEARCH_TOOL = {
+    'google_search_retrieval': {
+        'mode': 'web_with_bing'
+    }
+}
 
 load_dotenv()
 GEMINI_API_KEYS = os.getenv("gemini_api_keys", "").split(",")
@@ -128,9 +132,9 @@ async def daily_reset_stats():
         print("Daily stat reset complete.")
         await asyncio.sleep(1)
 
-def _get_tools_for_model(model_type):
-    if model_type in MODELS_WITH_TOOLS:
-        return ['google_search_retrieval', 'code_execution']
+def _get_tools_for_model(model_type: str):
+    if model_type in PRO_MODELS:
+        return [SEARCH_TOOL, 'code_execution']
     return None
 
 
@@ -156,96 +160,131 @@ async def _handle_response_streaming(response, sent_message, bot):
     return full_response
 
 async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str):
-    random_configure()
+    # انتخاب و کانفیگ کلید API
+    api_key = random.choice(GEMINI_API_KEYS)
+    genai.configure(api_key=api_key)
+
     sent_message = None
-    user_id_str = str(message.from_user.id)
-    _initialize_user(user_id_str)
+    user_id = str(message.from_user.id)
+    _initialize_user(user_id)
     user = message.from_user
     first_name = user.first_name or "کاربر"
 
-    time_zone = timezone(timedelta(hours=3, minutes=30))
-    date = datetime.now(time_zone).strftime("%d/%m/%Y")
-    timenow = datetime.now(time_zone).strftime("%H:%M:%S")
-    time_prompt = f"اطلاعات تاریخ و زمان:\nتاریخ: {date}\nزمان: {timenow}"
-    user_prompt = f"نام کاربر: {first_name}"
-    system_prompt = f"{user_prompt}\n{time_prompt}"
+    # ساخت system prompt با تاریخ و زمان
+    tz = timezone(timedelta(hours=3, minutes=30))
+    date = datetime.now(tz).strftime("%d/%m/%Y")
+    timenow = datetime.now(tz).strftime("%H:%M:%S")
+    system_prompt = (
+        f"نام کاربر: {first_name}\n"
+        f"تاریخ: {date}\nزمان: {timenow}\n"
+        + (default_system_prompt or "")
+    )
 
     try:
-        history_dicts = user_chats[user_id_str]["history"]
-        if not history_dicts and default_system_prompt:
-            history_dicts.extend([
-                {"role": "user", "parts": [{"text": system_prompt + "\n" + default_system_prompt}]},
-                {"role": "model", "parts": [{"text": "باشه، متوجه شدم."}]}
+        history = user_chats[user_id].setdefault("history", [])
+        if not history and default_system_prompt:
+            history.extend([
+                {"role": "user",  "parts":[{"text": system_prompt}]},
+                {"role": "model", "parts":[{"text": "باشه، متوجه شدم."}]}
             ])
 
-        tools_to_use = _get_tools_for_model(model_type)
-        model = genai.GenerativeModel(model_name=model_type, tools=tools_to_use, safety_settings=safety_settings)
-        chat = model.start_chat(history=history_dicts) 
+        # انتخاب ابزار بر اساس مدل
+        tools = _get_tools_for_model(model_type)
+
+        # ایجاد یا بازیابی چت
+        model = genai.GenerativeModel(
+            model_name=model_type,
+            tools=tools,
+            safety_settings=safety_settings
+        )
+        chat = model.start_chat(history=history)
 
         sent_message = await bot.reply_to(message, before_generate_info)
 
-        # ابزار جستجو استریمینگ را غیرفعال می‌کند، پس باید جداگانه مدیریت شود
-        stream_enabled = not bool(tools_to_use)
+        # اگر ابزار داریم، استریم خاموش؛ وگرنه استریم روشن
+        stream_enabled = not bool(tools)
         response = await chat.send_message_async(m, stream=stream_enabled)
 
-        full_response = ""
+        # جمع‌آوری پاسخ
         if stream_enabled:
             full_response = await _handle_response_streaming(response, sent_message, bot)
         else:
             try:
                 full_response = response.text
-            except (ValueError, generation_types.StopCandidateException) as e:
-                print(f"Response error (non-stream): {e}")
+            except (ValueError, generation_types.StopCandidateException):
                 full_response = ""
 
-        final_text = escape(full_response) if full_response else "پاسخی دریافت نشد. (احتمالاً به دلیل فیلتر ایمنی)"
-        await bot.edit_message_text(final_text, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
+        final_text = escape(full_response or "پاسخی دریافت نشد. (احتمالاً فیلتر ایمنی)")
+        await bot.edit_message_text(
+            final_text,
+            chat_id=sent_message.chat.id,
+            message_id=sent_message.message_id,
+            parse_mode="MarkdownV2"
+        )
 
-        user_chats[user_id_str]["stats"]["messages"] += 1
-        user_chats[user_id_str]["history_for_saving"] = _convert_chat_history_to_dicts(chat)
-        user_chats[user_id_str]["history"] = chat.history
+        # ذخیره‌ی تاریخچه
+        user_chats[user_id]["stats"]["messages"] += 1
+        user_chats[user_id]["history_for_saving"] = _convert_chat_history_to_dicts(chat)
+        user_chats[user_id]["history"] = chat.history
         asyncio.create_task(save_user_chats())
 
     except Exception as e:
         traceback.print_exc()
-        error_message_detail = f"{error_info}\nجزئیات خطا: {str(e)}"
+        err = f"{error_info}\nجزئیات خطا: {e}"
         if sent_message:
-            await bot.edit_message_text(error_message_detail, chat_id=sent_message.chat.id, message_id=sent_message.message_id)
+            await bot.edit_message_text(err, chat_id=sent_message.chat.id, message_id=sent_message.message_id)
         else:
-            await bot.reply_to(message, error_message_detail)
+            await bot.reply_to(message, err)
 
-async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, photo_file: bytes, model_type: str, status_message: Message = None):
-    random_configure()
-    user_id_str = str(message.from_user.id)
-    _initialize_user(user_id_str)
+# ———— تابع gemini_process_image_stream ————
+async def gemini_process_image_stream(
+    bot: TeleBot,
+    message: Message,
+    m: str,
+    photo_file: bytes,
+    model_type: str,
+    status_message: Message = None
+):
+    # انتخاب و کانفیگ کلید API
+    api_key = random.choice(GEMINI_API_KEYS)
+    genai.configure(api_key=api_key)
+
+    user_id = str(message.from_user.id)
+    _initialize_user(user_id)
     sent_message = status_message
     user = message.from_user
     first_name = user.first_name or "کاربر"
-    time_zone = timezone(timedelta(hours=3, minutes=30))
-    date = datetime.now(time_zone).strftime("%d/%m/%Y")
-    timenow = datetime.now(time_zone).strftime("%H:%M:%S")
-    time_prompt = f"اطلاعات تاریخ و زمان:\nتاریخ: {date}\nزمان: {timenow}"
-    user_prompt = f"نام کاربر: {first_name}"
-    full_prompt_text = f"{user_prompt}\n{time_prompt}\n\n{default_image_processing_prompt}\n\n{m}"
+
+    tz = timezone(timedelta(hours=3, minutes=30))
+    date = datetime.now(tz).strftime("%d/%m/%Y")
+    timenow = datetime.now(tz).strftime("%H:%M:%S")
+    full_prompt = (
+        f"نام کاربر: {first_name}\n"
+        f"تاریخ: {date}\nزمان: {timenow}\n\n"
+        f"{default_image_processing_prompt}\n\n{m}"
+    )
 
     try:
         image = Image.open(io.BytesIO(photo_file))
-        tools_for_image_processing = _get_tools_for_model(model_type)
-        model = genai.GenerativeModel(model_name=model_type, tools=tools_for_image_processing, safety_settings=safety_settings)
-        
-        history_dicts = user_chats[user_id_str].get("history", [])
-        user_message_part = {"role": "user", "parts": [full_prompt_text, image]}
-        
-        chat_contents = history_dicts + [user_message_part]
+
+        # انتخاب ابزار برای تصویر
+        tools = _get_tools_for_model(model_type)
+        model = genai.GenerativeModel(
+            model_name=model_type,
+            tools=tools,
+            safety_settings=safety_settings
+        )
+
+        history = user_chats[user_id].setdefault("history", [])
+        user_part = {"role": "user", "parts": [full_prompt, image]}
+        chat_contents = history + [user_part]
 
         if not sent_message:
             sent_message = await bot.reply_to(message, before_generate_info)
-        
-        
-        stream_enabled = not bool(tools_for_image_processing)
+
+        stream_enabled = not bool(tools)
         response = await model.generate_content_async(chat_contents, stream=stream_enabled)
 
-        full_response = ""
         if stream_enabled:
             full_response = await _handle_response_streaming(response, sent_message, bot)
         else:
@@ -254,28 +293,27 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
             except Exception:
                 full_response = ""
 
-        if full_response:
-             final_text = escape(full_response)
-        else:
-            final_text = escape("پاسخی دریافت نشد. (احتمالاً به دلیل فیلتر ایمنی)")
+        final_text = escape(full_response or "پاسخی دریافت نشد. (احتمالاً فیلتر ایمنی)")
+        await bot.edit_message_text(
+            final_text,
+            chat_id=sent_message.chat.id,
+            message_id=sent_message.message_id,
+            parse_mode="MarkdownV2"
+        )
 
-        await bot.edit_message_text(final_text, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
-
-        # تاریخچه را به صورت دستی آپدیت می‌کنیم
-        model_response_part = {"role": "model", "parts": [{"text": full_response}]}
-        user_chats[user_id_str]["history"].extend([user_message_part, model_response_part])
-        user_chats[user_id_str]["stats"]["messages"] += 1
+        # به‌روزرسانی تاریخچه
+        model_part = {"role": "model", "parts": [{"text": full_response}]}
+        history.extend([user_part, model_part])
+        user_chats[user_id]["stats"]["messages"] += 1
         asyncio.create_task(save_user_chats())
 
     except Exception as e:
         traceback.print_exc()
-        error_message_detail = f"{error_info}\nجزئیات خطا: {str(e)}"
-        final_error_message = escape(error_message_detail)
-
+        err = escape(f"{error_info}\nجزئیات خطا: {e}")
         if sent_message:
-            await bot.edit_message_text(final_error_message, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
+            await bot.edit_message_text(err, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
         else:
-            await bot.reply_to(message, final_error_message, parse_mode="MarkdownV2")
+            await bot.reply_to(message, err, parse_mode="MarkdownV2")
 
 
 async def gemini_process_voice(bot: TeleBot, message: Message, voice_file: bytes, model_type: str):
