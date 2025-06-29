@@ -26,11 +26,6 @@ download_pic_notify = conf["download_pic_notify"]
 default_system_prompt = conf.get("default_system_prompt", "").strip()
 default_image_processing_prompt = conf.get("default_image_processing_prompt", "")
 
-SEARCH_TOOL = {
-    'google_search_retrieval': {
-        'mode': 'web_with_bing'
-    }
-}
 
 load_dotenv()
 GEMINI_API_KEYS = os.getenv("gemini_api_keys", "").split(",")
@@ -134,7 +129,7 @@ async def daily_reset_stats():
 
 def _get_tools_for_model(model_type: str):
     if model_type in PRO_MODELS:
-        return [SEARCH_TOOL, 'code_execution']
+        return ['code_execution']
     return None
 
 
