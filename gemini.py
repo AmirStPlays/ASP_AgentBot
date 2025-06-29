@@ -134,7 +134,7 @@ async def daily_reset_stats():
 
 def _get_tools_for_model(model_type):
     if model_type in MODELS_WITH_TOOLS:
-        return ["google_search_retrieval"]
+        return ["google_search"]
     return None
 
 
@@ -216,6 +216,7 @@ async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str)
         else:
             await bot.reply_to(message, error_message_detail)
 
+
 async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, photo_file: bytes, model_type: str, status_message: Message = None):
     random_configure()
     user_id_str = str(message.from_user.id)
@@ -232,34 +233,37 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
 
     try:
         image = Image.open(io.BytesIO(photo_file))
-        tools_for_image_processing = None
+        tools_for_image_processing = _get_tools_for_model(model_type)
         model = genai.GenerativeModel(model_name=model_type, tools=tools_for_image_processing, safety_settings=safety_settings)
         
         history_dicts = user_chats[user_id_str].get("history", [])
+        
         user_message_part = {"role": "user", "parts": [full_prompt_text, image]}
+        
         chat_contents = history_dicts + [user_message_part]
 
         if not sent_message:
             sent_message = await bot.reply_to(message, before_generate_info)
+        
         stream_enabled = not bool(tools_for_image_processing)
-        response = await model.generate_content_async(chat_contents, stream=stream_enabled)
-
-        full_response = ""
+        
         if stream_enabled:
-            full_response = await _handle_response_streaming(response, sent_message, bot)
+             response = await model.generate_content_async(chat_contents, stream=True)
+             full_response = await _handle_response_streaming(response, sent_message, bot)
         else:
-            try:
+             chat = model.start_chat(history=history_dicts, enable_automatic_function_calling=True)
+             response = await chat.send_message_async(user_message_part['parts'])
+             try:
                 full_response = response.text
-            except Exception:
+             except (ValueError, generation_types.StopCandidateException):
                 full_response = ""
-
+        
         if full_response:
-            cleaned_response = full_response.strip().strip('`').strip()
-            final_text = f"```\n{cleaned_response}\n```"
+             final_text = escape(full_response)
         else:
             final_text = escape("پاسخی دریافت نشد. (احتمالاً به دلیل فیلتر ایمنی)")
 
-        await bot.edit_message_text(escape(final_text), chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
+        await bot.edit_message_text(final_text, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
 
         model_response_part = {"role": "model", "parts": [{"text": full_response}]}
         user_chats[user_id_str]["history"].extend([{"role": "user", "parts": [{"text": full_prompt_text}]}, model_response_part])
