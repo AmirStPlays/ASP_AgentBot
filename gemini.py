@@ -226,34 +226,28 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
     sent_message = status_message
     user = message.from_user
     first_name = user.first_name or "کاربر"
-
     time_zone = timezone(timedelta(hours=3, minutes=30))
     date = datetime.now(time_zone).strftime("%d/%m/%Y")
     timenow = datetime.now(time_zone).strftime("%H:%M:%S")
     time_prompt = f"اطلاعات تاریخ و زمان:\nتاریخ: {date}\nزمان: {timenow}"
     user_prompt = f"نام کاربر: {first_name}"
-    system_prompt = f"{user_prompt}\n{time_prompt}"
+    full_prompt_text = f"{user_prompt}\n{time_prompt}\n\n{default_image_processing_prompt}\n\n{m}"
 
     try:
         image = Image.open(io.BytesIO(photo_file))
         tools_to_use = _get_tools_for_model(model_type)
         model = genai.GenerativeModel(model_name=model_type, tools=tools_to_use, safety_settings=safety_settings)
-
         history_dicts = user_chats[user_id_str].get("history", [])
-
-        user_message_part = {"role": "user", "parts": [system_prompt + "\n" + m, image]}
+        user_message_part = {"role": "user", "parts": [full_prompt_text, image]}
         chat_contents = history_dicts + [user_message_part]
 
         if not sent_message:
-            
             sent_message = await bot.reply_to(message, before_generate_info)
-
         stream_enabled = not bool(tools_to_use)
         response = await model.generate_content_async(chat_contents, stream=stream_enabled)
 
         full_response = ""
         if stream_enabled:
-            
             full_response = await _handle_response_streaming(response, sent_message, bot)
         else:
             try:
@@ -262,16 +256,12 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
                 print(f"Response error (image, non-stream): {e}")
                 full_response = ""
 
-        
         final_text = escape(full_response) if full_response else "پاسخی دریافت نشد. (احتمالاً به دلیل فیلتر ایمنی)"
-        
-        
         await bot.edit_message_text(final_text, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
-
         model_response_part = {"role": "model", "parts": [{"text": full_response}]}
-        user_message_part_for_saving = {"role": "user", "parts": [{"text": m}]}
 
-        user_chats[user_id_str]["history"].extend([user_message_part_for_saving, model_response_part])
+        user_chats[user_id_str]["history"].extend([user_message_part, model_response_part])
+        
         user_chats[user_id_str]["stats"]["messages"] += 1
         asyncio.create_task(save_user_chats())
 
