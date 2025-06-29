@@ -132,27 +132,6 @@ async def daily_reset_stats():
         print("Daily stat reset complete.")
         await asyncio.sleep(1)
 
-import io
-import time
-import traceback
-import random
-from PIL import Image
-from telebot.types import Message
-from md2tgmd import escape
-from telebot import TeleBot
-from config import conf, safety_settings, generation_config
-from datetime import datetime, timezone, timedelta, time as dt_time
-import google.generativeai as genai
-from google.generativeai import types
-from google import genai as genai1
-from google.generativeai.types import generation_types
-import os
-from dotenv import load_dotenv
-import json
-import aiofiles
-import asyncio
-
-# ... (بقیه کدها بدون تغییر باقی می‌مانند) ...
 
 def _get_tools_for_model(model_type):
     if model_type in MODELS_WITH_TOOLS:
