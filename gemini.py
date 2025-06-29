@@ -231,7 +231,10 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
     timenow = datetime.now(time_zone).strftime("%H:%M:%S")
     time_prompt = f"اطلاعات تاریخ و زمان:\nتاریخ: {date}\nزمان: {timenow}"
     user_prompt = f"نام کاربر: {first_name}"
-    full_prompt_text = f"{user_prompt}\n{time_prompt}\n\n{default_image_processing_prompt}\n\n{m}"
+    # به مدل می‌گوییم که پاسخ را برای خوانایی بهتر در یک بلوک کد قرار دهد
+    # این کار به خصوص برای تولید prompt مفید است
+    prompt_instruction = "پاسخ خود را همیشه در یک بلوک کد Markdown بنویس تا به راحتی قابل کپی باشد."
+    full_prompt_text = f"{user_prompt}\n{time_prompt}\n\n{default_image_processing_prompt}\n\n{m}\n\n{prompt_instruction}"
 
     try:
         image = Image.open(io.BytesIO(photo_file))
@@ -255,11 +258,21 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
             except (ValueError, generation_types.StopCandidateException) as e:
                 print(f"Response error (image, non-stream): {e}")
                 full_response = ""
+        if full_response:            
+            cleaned_response = full_response.strip()            
+            if cleaned_response.startswith("```") and cleaned_response.endswith("```"):              
+                 cleaned_response = cleaned_response.strip("`").strip()                
+                 if '\n' in cleaned_response:
+                     cleaned_response = '\n'.join(cleaned_response.split('\n')[1:])
+            final_text = f"```\n{cleaned_response.strip()}\n```"
+        else:
+            
+            final_text = escape("پاسخی دریافت نشد. (احتمالاً به دلیل فیلتر ایمنی)")
 
-        final_text = escape(full_response) if full_response else "پاسخی دریافت نشد. (احتمالاً به دلیل فیلتر ایمنی)"
         await bot.edit_message_text(final_text, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
-        model_response_part = {"role": "model", "parts": [{"text": full_response}]}
+        
 
+        model_response_part = {"role": "model", "parts": [{"text": full_response}]}
         user_chats[user_id_str]["history"].extend([user_message_part, model_response_part])
         
         user_chats[user_id_str]["stats"]["messages"] += 1
@@ -268,6 +281,7 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
     except Exception as e:
         traceback.print_exc()
         error_message_detail = f"{error_info}\nجزئیات خطا: {str(e)}"
+        
         final_error_message = escape(error_message_detail)
         
         if sent_message:
