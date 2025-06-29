@@ -232,16 +232,16 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
 
     try:
         image = Image.open(io.BytesIO(photo_file))
-        tools_to_use = _get_tools_for_model(model_type)
-        model = genai.GenerativeModel(model_name=model_type, tools=tools_to_use, safety_settings=safety_settings)
+        tools_for_image_processing = None
+        model = genai.GenerativeModel(model_name=model_type, tools=tools_for_image_processing, safety_settings=safety_settings)
+        
         history_dicts = user_chats[user_id_str].get("history", [])
         user_message_part = {"role": "user", "parts": [full_prompt_text, image]}
         chat_contents = history_dicts + [user_message_part]
 
         if not sent_message:
             sent_message = await bot.reply_to(message, before_generate_info)
-
-        stream_enabled = not bool(tools_to_use)
+        stream_enabled = not bool(tools_for_image_processing)
         response = await model.generate_content_async(chat_contents, stream=stream_enabled)
 
         full_response = ""
@@ -262,7 +262,7 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
         await bot.edit_message_text(escape(final_text), chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
 
         model_response_part = {"role": "model", "parts": [{"text": full_response}]}
-        user_chats[user_id_str]["history"].extend([user_message_part, model_response_part])
+        user_chats[user_id_str]["history"].extend([{"role": "user", "parts": [{"text": full_prompt_text}]}, model_response_part])
         user_chats[user_id_str]["stats"]["messages"] += 1
         asyncio.create_task(save_user_chats())
 
