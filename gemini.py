@@ -10,6 +10,7 @@ from config import conf, safety_settings, generation_config
 from datetime import datetime, timezone, timedelta, time as dt_time
 import google.generativeai as genai
 from google import genai as genai1
+from google.generativeai import types
 from google.generativeai.types import generation_types
 import os
 from dotenv import load_dotenv
