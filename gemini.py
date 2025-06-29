@@ -2,12 +2,12 @@ import random
 import io
 import traceback
 import asyncio
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, time as dt_time
 from PIL import Image
 from telebot import TeleBot
 from telebot.types import Message
 import google.generativeai as genai
-from google.generativeai import generation_types
+from google.generativeai.types import generation_types
 from md2tgmd import escape
 from config import conf, safety_settings, generation_config
 
