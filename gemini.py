@@ -132,9 +132,35 @@ async def daily_reset_stats():
         print("Daily stat reset complete.")
         await asyncio.sleep(1)
 
+import io
+import time
+import traceback
+import random
+from PIL import Image
+from telebot.types import Message
+from md2tgmd import escape
+from telebot import TeleBot
+from config import conf, safety_settings, generation_config
+from datetime import datetime, timezone, timedelta, time as dt_time
+import google.generativeai as genai
+from google.generativeai import types
+from google import genai as genai1
+from google.generativeai.types import generation_types
+import os
+from dotenv import load_dotenv
+import json
+import aiofiles
+import asyncio
+
+# ... (بقیه کدها بدون تغییر باقی می‌مانند) ...
+
 def _get_tools_for_model(model_type):
     if model_type in MODELS_WITH_TOOLS:
-        return ["google_search_retrieval"]
+        return [types.Tool(
+            google_search_retrieval=types.GoogleSearchRetrieval(
+                disable_attribution=False
+            )
+        )]
     return None
 
 
@@ -232,7 +258,7 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
 
     try:
         image = Image.open(io.BytesIO(photo_file))
-        tools_for_image_processing = None
+        tools_for_image_processing = _get_tools_for_model(model_type)
         model = genai.GenerativeModel(model_name=model_type, tools=tools_for_image_processing, safety_settings=safety_settings)
         
         history_dicts = user_chats[user_id_str].get("history", [])
@@ -254,12 +280,11 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
                 full_response = ""
 
         if full_response:
-            cleaned_response = full_response.strip().strip('`').strip()
-            final_text = f"```\n{cleaned_response}\n```"
+             final_text = escape(full_response)
         else:
             final_text = escape("پاسخی دریافت نشد. (احتمالاً به دلیل فیلتر ایمنی)")
 
-        await bot.edit_message_text(escape(final_text), chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
+        await bot.edit_message_text(final_text, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
 
         model_response_part = {"role": "model", "parts": [{"text": full_response}]}
         user_chats[user_id_str]["history"].extend([{"role": "user", "parts": [{"text": full_prompt_text}]}, model_response_part])
