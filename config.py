@@ -45,7 +45,7 @@ conf = {
 }
 
 
-CHANNEL_USERNAME = "@ASP_bot_collection2"
+CHANNEL_USERNAME = "@ASP_bot_collection"
 
 
 safety_settings = [
