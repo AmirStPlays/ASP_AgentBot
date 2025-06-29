@@ -5,6 +5,8 @@ import asyncio
 from datetime import datetime, timezone, timedelta, time as dt_time
 from PIL import Image
 from telebot import TeleBot
+from dotenv import load_dotenv
+import os
 from telebot.types import Message
 import google.generativeai as genai
 from google.generativeai.types import generation_types
