@@ -14,7 +14,7 @@ from config import conf, safety_settings, generation_config
 
 PRO_MODELS = {
     conf["model_1"],
-    conf["model_2"],
+    conf["model_2"]}
 
 
 model_1 = conf["model_1"]
