@@ -178,31 +178,27 @@ async def _handle_response_streaming(response, sent_message, bot, chat_session=N
             # بررسی وجود تماس تابع در هر قطعه از استریم
             if (chunk.candidates and chunk.candidates[0].content.parts and
                     hasattr(chunk.candidates[0].content.parts[0], 'function_call')):
-                
                 function_call = chunk.candidates[0].content.parts[0].function_call
-                
+
                 # اگر تماس تابع برای جستجو بود
                 if function_call.name == "search" and chat_session:
-                    await bot.edit_message_text("... در حال جستجو در وب 🔍", chat_id=sent_message.chat.id, message_id=sent_message.message_id)
-                    query = function_call.args["query"]
+                    await bot.edit_message_text("... در حال جستجو در وب 🔍",
+                                                chat_id=sent_message.chat.id,
+                                                message_id=sent_message.message_id)
+                    query = function_call.args.get("query")
                     search_result_text = await execute_search(query)
-                    
-                    # --- راه حل نهایی و صحیح ---
-                    # ساختن پاسخ تابع با استفاده از کلاس‌های موجود در ماژول `types`
-                    # این روش استاندارد و مستند شده کتابخانه است.
+
+                    # ارسال پاسخ تابع به چت‌سشن بدون استفاده از Part
                     response_after_func = await chat_session.send_message_async(
-                        types.Part(function_response=types.FunctionResponse(
+                        types.FunctionResponse(
                             name="search",
                             response={"result": search_result_text}
-                        )),
+                        ),
                         stream=True
                     )
-                    
-                    # پردازش استریم جدید برای دریافت پاسخ نهایی و بازگرداندن آن
-                    return await _handle_response_streaming(response_after_func, sent_message, bot)
-                
-                # اگر تابع دیگری بود، فعلا نادیده بگیر
-                continue
+
+                    # پردازش استریم جدید برای دریافت پاسخ نهایی
+                    return await _handle_response_streaming(response_after_func, sent_message, bot, chat_session)
 
             # اگر قطعه حاوی متن بود، آن را پردازش کن
             if hasattr(chunk, 'text') and chunk.text:
@@ -210,7 +206,12 @@ async def _handle_response_streaming(response, sent_message, bot, chat_session=N
                 current_time = time.time()
                 if current_time - last_update >= update_interval:
                     if full_response.strip():
-                        await bot.edit_message_text(escape(full_response + "✍️"), chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
+                        await bot.edit_message_text(
+                            escape(full_response + "✍️"),
+                            chat_id=sent_message.chat.id,
+                            message_id=sent_message.message_id,
+                            parse_mode="MarkdownV2"
+                        )
                         last_update = current_time
 
     except (ValueError, generation_types.StopCandidateException) as e:
@@ -220,6 +221,7 @@ async def _handle_response_streaming(response, sent_message, bot, chat_session=N
         traceback.print_exc()
 
     return full_response
+
 
 
 async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str):
