@@ -229,16 +229,22 @@ async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str)
 
         sent_message = await bot.reply_to(message, before_generate_info)
         
-        response = await chat_session.send_message_async(m)
-        candidate = response.candidates[0]
+        response_generator = await chat_session.send_message_async(m, stream=True)
+        
+        # Check for function call in the first chunk
+        first_chunk = await anext(response_generator)
+        candidate = first_chunk.candidates[0]
+
         if candidate.content.parts and candidate.content.parts[0].function_call:
             function_call = candidate.content.parts[0].function_call
             if function_call.name == "search":
                 await bot.edit_message_text("... در حال جستجو در وب 🔍", chat_id=sent_message.chat.id, message_id=sent_message.message_id)
                 query = function_call.args["query"]
                 search_result_text = await execute_search(query)
+                
+                # FIX: Use genai.Part instead of types.Part
                 response = await chat_session.send_message_async(
-                    types.Part(function_response=types.FunctionResponse(
+                    genai.Part(function_response=types.FunctionResponse(
                         name="search",
                         response={"result": search_result_text}
                     )),
@@ -246,8 +252,14 @@ async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str)
                 )
                 full_response = await _handle_response_streaming(response, sent_message, bot)
         else:
+            # Reconstruct the generator to include the first chunk
+            async def combined_generator():
+                yield first_chunk
+                async for chunk in response_generator:
+                    yield chunk
+            
+            full_response = await _handle_response_streaming(combined_generator(), sent_message, bot)
 
-            full_response = response.text
 
         final_text = escape(full_response or "پاسخی دریافت نشد.")
         
