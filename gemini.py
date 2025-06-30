@@ -178,27 +178,41 @@ async def _handle_response_streaming(response, sent_message, bot, chat_session=N
             # بررسی وجود تماس تابع در هر قطعه از استریم
             if (chunk.candidates and chunk.candidates[0].content.parts and
                     hasattr(chunk.candidates[0].content.parts[0], 'function_call')):
-                function_call = chunk.candidates[0].content.parts[0].function_call
+                tool_call = chunk.candidates[0].content.parts[0].function_call
 
                 # اگر تماس تابع برای جستجو بود
-                if function_call.name == "search" and chat_session:
-                    await bot.edit_message_text("... در حال جستجو در وب 🔍",
-                                                chat_id=sent_message.chat.id,
-                                                message_id=sent_message.message_id)
-                    query = function_call.args.get("query")
+                if tool_call.name == "search" and chat_session:
+                    await bot.edit_message_text(
+                        "... در حال جستجو در وب 🔍",
+                        chat_id=sent_message.chat.id,
+                        message_id=sent_message.message_id
+                    )
+                    query = tool_call.args.get("query")
                     search_result_text = await execute_search(query)
 
-                    # ارسال پاسخ تابع به چت‌سشن بدون استفاده از Part
+                    # ایجاد بخش پاسخ تابع
+                    function_response_part = types.Part.from_function_response(
+                        name=tool_call.name,
+                        response={"result": search_result_text}
+                    )
+                    # بسته‌بندی محتوا با نقش کاربر
+                    function_response_content = types.Content(
+                        role="user",
+                        parts=[function_response_part]
+                    )
+                    # ارسال مجدد محتوا شامل پاسخ مدل و پاسخ تابع
                     response_after_func = await chat_session.send_message_async(
-                        types.FunctionResponse(
-                            name="search",
-                            response={"result": search_result_text}
-                        ),
+                        [chunk.candidates[0].content, function_response_content],
                         stream=True
                     )
 
                     # پردازش استریم جدید برای دریافت پاسخ نهایی
-                    return await _handle_response_streaming(response_after_func, sent_message, bot, chat_session)
+                    return await _handle_response_streaming(
+                        response_after_func,
+                        sent_message,
+                        bot,
+                        chat_session
+                    )
 
             # اگر قطعه حاوی متن بود، آن را پردازش کن
             if hasattr(chunk, 'text') and chunk.text:
