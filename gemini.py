@@ -285,62 +285,87 @@ async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str)
         else:
             await bot.reply_to(message, err)
 
-async def gemini_process_image_stream(bot: TeleBot,message: Message,m: str,photo_file: bytes,model_type: str,status_message: Message = None):
-    api_key = random.choice(GEMINI_API_KEYS)
-    genai.configure(api_key=api_key)
-
+async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, photo_file: bytes, model_type: str, status_message: Message = None):
     user_id = str(message.from_user.id)
     _initialize_user(user_id)
     sent_message = status_message
-    user = message.from_user
-    first_name = user.first_name or "کاربر"
-
-    tz = timezone(timedelta(hours=3, minutes=30))
-    date = datetime.now(tz).strftime("%d/%m/%Y")
-    timenow = datetime.now(tz).strftime("%H:%M:%S")
-    full_prompt = (
-        f"نام کاربر: {first_name}\n"
-        f"تاریخ: {date}\nزمان: {timenow}\n\n"
-        f"{default_image_processing_prompt}\n\n{m}"
-    )
-
     try:
+        client = get_random_client()
+        chat_session_key = 'chat_session'
+        chat_model_key = 'chat_model'
+        chat_session = user_chats[user_id].get(chat_session_key)
+        current_model = user_chats[user_id].get(chat_model_key)
+        if not chat_session or current_model != model_type:
+            user = message.from_user
+            first_name = user.first_name or "کاربر"
+            tz = timezone(timedelta(hours=3, minutes=30))
+            date = datetime.now(tz).strftime("%d/%m/%Y")
+            timenow = datetime.now(tz).strftime("%H:%M:%S")
+            system_prompt_text = (
+                f"نام کاربر: {first_name}\n"
+                f"تاریخ: {date}\nزمان: {timenow}\n\n"
+                f"{default_system_prompt}"
+            )
+            initial_history = [
+                {'role': 'user', 'parts': [{'text': system_prompt_text}]},
+                {'role': 'model', 'parts': [{'text': "باشه، متوجه شدم. آماده‌ام."}]}
+            ]
+            chat_session = client.aio.chats.create(
+                model=model_type,
+                history=initial_history
+            )
+            user_chats[user_id][chat_session_key] = chat_session
+            user_chats[user_id][chat_model_key] = model_type
         image = Image.open(io.BytesIO(photo_file))
-        model = genai.GenerativeModel(
-            model_name=model_type,
-            safety_settings=safety_settings
-        )
+        contents = [m, image]
 
         if not sent_message:
             sent_message = await bot.reply_to(message, before_generate_info)
-
-        contents = [full_prompt, image]
-        response = await model.generate_content_async(contents, stream=True)
-        full_response = await _handle_response_streaming_genai1(response, sent_message, bot)
-
+        response_stream = await chat_session.send_message_stream(contents)
+        full_response = ""
+        last_update = time.time()
+        update_interval = conf["streaming_update_interval"]
+        async for chunk in response_stream:
+            if hasattr(chunk, 'text') and chunk.text:
+                full_response += chunk.text
+                current_time = time.time()
+                if current_time - last_update >= update_interval and full_response.strip():
+                    try:
+                        await bot.edit_message_text(
+                            escape(full_response + "✍️"),
+                            chat_id=sent_message.chat.id,
+                            message_id=sent_message.message_id,
+                            parse_mode="MarkdownV2"
+                        )
+                    except Exception as e:
+                        if "message is not modified" not in str(e).lower():
+                            await bot.edit_message_text(
+                                full_response + "✍️",
+                                chat_id=sent_message.chat.id,
+                                message_id=sent_message.message_id
+                            )
+                    last_update = current_time
         final_text = escape(full_response or "پاسخی دریافت نشد.")
         text_parts = split_long_message(final_text, 4000)
+        
         for i, part in enumerate(text_parts):
-            if i == 0:
-                await bot.edit_message_text(
-                    part,
-                    chat_id=sent_message.chat.id,
-                    message_id=sent_message.message_id,
-                    parse_mode="MarkdownV2"
-                )
-            else:
-                await bot.send_message(
-                    message.chat.id,
-                    part,
-                    parse_mode="MarkdownV2"
-                )
+            try:
+                if i == 0:
+                    await bot.edit_message_text(part, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
+                else:
+                    await bot.send_message(message.chat.id, part, parse_mode="MarkdownV2")
+            except Exception:
+                if i == 0:
+                    await bot.edit_message_text(part, chat_id=sent_message.chat.id, message_id=sent_message.message_id)
+                else:
+                    await bot.send_message(message.chat.id, part)
 
         user_chats[user_id]["stats"]["messages"] += 1
         asyncio.create_task(save_user_chats())
 
     except Exception as e:
         traceback.print_exc()
-        err = escape(f"{error_info}\nجزئیات خطا: {e}")
+        err = escape(f"{error_info}\nجزئیات خطا: {str(e)}")
         if sent_message:
             await bot.edit_message_text(err, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
         else:
