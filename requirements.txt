@@ -9,3 +9,4 @@ flask
 aiofiles
 gunicorn
 python-dotenv
+duckduckgo_search
