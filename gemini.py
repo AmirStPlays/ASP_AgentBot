@@ -173,65 +173,48 @@ async def _handle_response_streaming(response, sent_message, bot, chat_session=N
     full_response = ""
     last_update = time.time()
     update_interval = conf["streaming_update_interval"]
+
     try:
         async for chunk in response:
-            # بررسی وجود تماس تابع در هر قطعه از استریم
-            if (chunk.candidates and chunk.candidates[0].content.parts and
-                    hasattr(chunk.candidates[0].content.parts[0], 'function_call')):
-                tool_call = chunk.candidates[0].content.parts[0].function_call
-
-                # اگر تماس تابع برای جستجو بود
-                if tool_call.name == "search" and chat_session:
-                    await bot.edit_message_text(
-                        "... در حال جستجو در وب 🔍",
-                        chat_id=sent_message.chat.id,
-                        message_id=sent_message.message_id
-                    )
-                    query = tool_call.args.get("query")
+            # بررسی تماس تابع
+            if hasattr(chunk, 'function_call'):
+                function_call = chunk.function_call
+                if function_call.name == "search" and chat_session:
+                    await bot.edit_message_text("... در حال جستجو در وب 🔍", chat_id=sent_message.chat.id, message_id=sent_message.message_id)
+                    query = function_call.arguments.get("query", "")
                     search_result_text = await execute_search(query)
 
-                    # ایجاد بخش پاسخ تابع
-                    function_response_part = types.Part.from_function_response(
-                        name=tool_call.name,
-                        response={"result": search_result_text}
-                    )
-                    # بسته‌بندی محتوا با نقش کاربر
-                    function_response_content = types.Content(
-                        role="user",
-                        parts=[function_response_part]
-                    )
-                    # ارسال مجدد محتوا شامل پاسخ مدل و پاسخ تابع
-                    response_after_func = await chat_session.send_message_async(
-                        [chunk.candidates[0].content, function_response_content],
-                        stream=True
-                    )
+                    # ادامه چت پس از پاسخ تابع
+                    response_after_func = await chat_session.send_message_stream({
+                        "name": function_call.name,
+                        "response": {
+                            "result": search_result_text
+                        }
+                    })
 
-                    # پردازش استریم جدید برای دریافت پاسخ نهایی
-                    return await _handle_response_streaming(
-                        response_after_func,
-                        sent_message,
-                        bot,
-                        chat_session
-                    )
+                    # ادامه‌ی استریم پاسخ نهایی
+                    return await _handle_response_streaming(response_after_func, sent_message, bot, chat_session)
 
-            # اگر قطعه حاوی متن بود، آن را پردازش کن
+                continue
+
+            # دریافت متن استریم شده
             if hasattr(chunk, 'text') and chunk.text:
                 full_response += chunk.text
-                current_time = time.time()
-                if current_time - last_update >= update_interval:
-                    if full_response.strip():
-                        await bot.edit_message_text(
-                            escape(full_response + "✍️"),
+                now = time.time()
+                if now - last_update >= update_interval:
+                    try:
+                        await bot.edit_message_text(escape(full_response + "✍️"),
                             chat_id=sent_message.chat.id,
                             message_id=sent_message.message_id,
                             parse_mode="MarkdownV2"
                         )
-                        last_update = current_time
+                    except Exception as e:
+                        if "message is not modified" not in str(e).lower():
+                            print(f"edit_message_text error: {e}")
+                    last_update = now
 
-    except (ValueError, generation_types.StopCandidateException) as e:
-        print(f"Streaming stopped for a valid reason: {e}")
     except Exception as e:
-        print(f"Error during streaming: {e}")
+        print("Error during streaming:")
         traceback.print_exc()
 
     return full_response
@@ -239,77 +222,98 @@ async def _handle_response_streaming(response, sent_message, bot, chat_session=N
 
 
 async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str):
-    user_id = str(message.from_user.id)
-    _initialize_user(user_id)
+    """
+    Streams a chat response from Gemini, updating the Telegram message progressively.
+    Supports web search tool and separate sessions for pro and non-pro models.
+    """
     sent_message = None
-
     try:
-        api_key = random.choice(GEMINI_API_KEYS)
-        genai.configure(api_key=api_key)
-
-        chat_session_key = 'chat_session'
-        chat_model_key = 'chat_model'
-
-        chat_session = user_chats[user_id].get(chat_session_key)
-        current_model = user_chats[user_id].get(chat_model_key)
-
-        if not chat_session or current_model != model_type:
-            user = message.from_user
-            first_name = user.first_name or "کاربر"
-            tz = timezone(timedelta(hours=3, minutes=30))
-            date = datetime.now(tz).strftime("%d/%m/%Y")
-            timenow = datetime.now(tz).strftime("%H:%M:%S")
-            system_prompt = (f"نام کاربر: {first_name}\nتاریخ: {date}\nزمان: {timenow}\n{default_system_prompt or ''}")
-
-            initial_history = user_chats[user_id].get("history", [])
-            if not initial_history and default_system_prompt:
-                initial_history.extend([
-                    {"role": "user", "parts": [{"text": system_prompt}]},
-                    {"role": "model", "parts": [{"text": "باشه، متوجه شدم."}]}
-                ])
-
-            model = genai.GenerativeModel(model_name=model_type, safety_settings=safety_settings, tools=_get_tools_for_model(model_type))
-            chat_session = model.start_chat(history=initial_history)
-            user_chats[user_id][chat_session_key] = chat_session
-            user_chats[user_id][chat_model_key] = model_type
-
+        # send initial placeholder
         sent_message = await bot.reply_to(message, before_generate_info)
-        
-        # همیشه یک درخواست استریم ارسال کن
-        response_stream = await chat_session.send_message_async(m, stream=True)
-        
-        # پردازش استریم را به تابع مدیریت‌کننده بسپار
-        full_response = await _handle_response_streaming(response_stream, sent_message, bot, chat_session)
 
-        final_text = escape(full_response or "پاسخی دریافت نشد.")
-        
-        # اگر پیام نهایی طولانی است، آن را تقسیم کن
-        text_parts = split_long_message(final_text, 4000)
-        for i, part in enumerate(text_parts):
-            if i == 0:
-                # پیام اول را ویرایش کن
-                await bot.edit_message_text(part, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
-            else:
-                # بخش‌های بعدی را به عنوان پیام جدید ارسال کن
-                await bot.send_message(message.chat.id, part, parse_mode="MarkdownV2")
+        # pick appropriate chat dictionary
+        chat_dict = gemini_chat_dict if model_type == model_1 else gemini_pro_chat_dict
+        user_key = str(message.from_user.id)
 
-        user_chats[user_id]["stats"]["messages"] += 1
-        user_chats[user_id]["history"] = [
-            {"role": msg.role, "parts": [{"text": p.text} for p in msg.parts if hasattr(p, 'text')]}
-            for msg in chat_session.history if not any(hasattr(p, 'function_call') or hasattr(p, 'function_response') for p in msg.parts)
-        ]
-        asyncio.create_task(save_user_chats())
+        # initialize or retrieve chat session
+        if user_key not in chat_dict:
+            session = await client.aio.chats.create(
+                model=model_type,
+                config={**generation_config, 'tools': [search_tool]}
+            )
+            chat_dict[user_key] = session
+        else:
+            session = chat_dict[user_key]
+
+        # stream the response
+        stream = await session.send_message_stream(m)
+        full_response = ""
+        last_update = time.time()
+        interval = conf.get("streaming_update_interval", 1)
+
+        async for chunk in stream:
+            # if this chunk contains a function call, handle search
+            if hasattr(chunk, 'function_call'):
+                # perform search and send result back into session
+                query = chunk.function_call.arguments.get('query')
+                results = await execute_search(query)
+                # send function response
+                stream = await session.send_message_stream(
+                    {'name': chunk.function_call.name, 'response': {'result': results}}
+                )
+                continue
+
+            # append text and update message periodically
+            if hasattr(chunk, 'text') and chunk.text:
+                full_response += chunk.text
+                now = time.time()
+                if now - last_update >= interval:
+                    try:
+                        await bot.edit_message_text(
+                            escape(full_response),
+                            chat_id=sent_message.chat.id,
+                            message_id=sent_message.message_id,
+                            parse_mode="MarkdownV2"
+                        )
+                    except Exception as e:
+                        err = str(e).lower()
+                        if "parse markdown" in err:
+                            await bot.edit_message_text(
+                                full_response,
+                                chat_id=sent_message.chat.id,
+                                message_id=sent_message.message_id
+                            )
+                        elif "message is not modified" not in err:
+                            print(f"Update error: {e}")
+                    last_update = now
+
+        # final update
+        try:
+            await bot.edit_message_text(
+                escape(full_response),
+                chat_id=sent_message.chat.id,
+                message_id=sent_message.message_id,
+                parse_mode="MarkdownV2"
+            )
+        except Exception:
+            await bot.edit_message_text(
+                full_response,
+                chat_id=sent_message.chat.id,
+                message_id=sent_message.message_id
+            )
 
     except Exception as e:
         traceback.print_exc()
-        err = f"{error_info}\nجزئیات خطا: {e}"
+        err_text = f"{error_info}\nError details: {e}"
         if sent_message:
-            try:
-                await bot.edit_message_text(err, chat_id=sent_message.chat.id, message_id=sent_message.message_id)
-            except Exception:
-                await bot.reply_to(message, err)
+            await bot.edit_message_text(
+                err_text,
+                chat_id=sent_message.chat.id,
+                message_id=sent_message.message_id
+            )
         else:
-            await bot.reply_to(message, err)
+            await bot.reply_to(message, err_text)
+
 
 
 async def gemini_process_image_stream(
