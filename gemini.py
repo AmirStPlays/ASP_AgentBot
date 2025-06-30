@@ -224,7 +224,7 @@ async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str)
             chat_config = {}
             if tools_config:
                 chat_config['tools'] = tools_config
-            # ایجاد چت جدید با تاریخچه اولیه و تنظیمات ابزار
+
             chat_session = client.aio.chats.create(
                 model=model_type,
                 history=initial_history,
@@ -232,6 +232,7 @@ async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str)
             )
             user_chats[user_id][chat_session_key] = chat_session
             user_chats[user_id][chat_model_key] = model_type
+
         sent_message = await bot.reply_to(message, before_generate_info)
         response_stream = await chat_session.send_message_stream(m)
         full_response = ""
@@ -241,7 +242,6 @@ async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str)
             if hasattr(chunk, 'text') and chunk.text:
                 full_response += chunk.text
                 current_time = time.time()
-                
                 if current_time - last_update >= update_interval and full_response.strip():
                     try:
                         await bot.edit_message_text(
@@ -258,9 +258,10 @@ async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str)
                                 message_id=sent_message.message_id
                             )
                     last_update = current_time
+
         final_text = escape(full_response or "پاسخی دریافت نشد.")
         text_parts = split_long_message(final_text, 4000)
-        
+
         for i, part in enumerate(text_parts):
             try:
                 if i == 0:
@@ -284,6 +285,7 @@ async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str)
                 await bot.reply_to(message, err)
         else:
             await bot.reply_to(message, err)
+
 
 async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, photo_file: bytes, model_type: str, status_message: Message = None):
     user_id = str(message.from_user.id)
@@ -316,11 +318,13 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
             )
             user_chats[user_id][chat_session_key] = chat_session
             user_chats[user_id][chat_model_key] = model_type
+
         image = Image.open(io.BytesIO(photo_file))
         contents = [m, image]
 
         if not sent_message:
             sent_message = await bot.reply_to(message, before_generate_info)
+
         response_stream = await chat_session.send_message_stream(contents)
         full_response = ""
         last_update = time.time()
@@ -345,9 +349,10 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
                                 message_id=sent_message.message_id
                             )
                     last_update = current_time
+
         final_text = escape(full_response or "پاسخی دریافت نشد.")
         text_parts = split_long_message(final_text, 4000)
-        
+
         for i, part in enumerate(text_parts):
             try:
                 if i == 0:
@@ -370,6 +375,7 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
             await bot.edit_message_text(err, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
         else:
             await bot.reply_to(message, err, parse_mode="MarkdownV2")
+
 
 
 async def gemini_process_voice(bot: TeleBot, message: Message, voice_file: bytes, model_type: str):
