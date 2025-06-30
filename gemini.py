@@ -224,7 +224,6 @@ async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str)
         current_model = user_chats[user_id].get(chat_model_key)
         session_lib = user_chats[user_id].get(chat_session_lib_key)
 
-        # اگر سشن وجود نداشت، یا مدل یا کتابخانه عوض شده بود، یک سشن جدید بساز
         if not chat_session or current_model != model_type or session_lib != 'genai1':
             user = message.from_user
             first_name = user.first_name or "کاربر"
@@ -234,13 +233,18 @@ async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str)
             system_prompt_text = (f"نام کاربر: {first_name}\nتاریخ: {date}\nزمان: {timenow}\n{default_system_prompt or ''}")
 
             stored_history = user_chats[user_id].get("history", [])
-            # تاریخچه را برای فرمت مورد نیاز google-genai آماده کن
-            history_for_genai1 = [{'role': msg['role'], 'parts': [p['text'] for p in msg['parts']]} for msg in stored_history]
+            
+            # *** اصلاحیه اول: تبدیل تاریخچه ذخیره‌شده به فرمت صحیح ***
+            history_for_genai1 = [
+                {'role': msg['role'], 'parts': [{'text': p['text']} for p in msg['parts']]}
+                for msg in stored_history
+            ]
 
+            # *** اصلاحیه دوم: افزودن پرامپت سیستمی با فرمت صحیح ***
             if not stored_history and default_system_prompt:
                 history_for_genai1.extend([
-                    {"role": "user", "parts": [system_prompt_text]},
-                    {"role": "model", "parts": ["باشه، متوجه شدم."]}
+                    {"role": "user", "parts": [{"text": system_prompt_text}]},
+                    {"role": "model", "parts": [{"text": "باشه، متوجه شدم."}]}
                 ])
 
             tools_config = [search_tool_genai1] if model_type in PRO_MODELS else None
@@ -248,7 +252,6 @@ async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str)
             if tools_config:
                 chat_config['tools'] = tools_config
             
-            # ساخت چت جدید با تاریخچه و تنظیمات ابزار
             chat_session = client.aio.chats.create(model=model_type, history=history_for_genai1, config=chat_config)
             user_chats[user_id][chat_session_key] = chat_session
             user_chats[user_id][chat_model_key] = model_type
@@ -256,7 +259,6 @@ async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str)
 
         sent_message = await bot.reply_to(message, before_generate_info)
         
-        # یک تابع کمکی برای ترکیب اولین چانک با بقیه استریم
         async def combine_stream(first, rest_iterator):
             yield first
             async for item in rest_iterator:
@@ -271,7 +273,6 @@ async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str)
         except StopAsyncIteration:
             full_response = "پاسخ خالی دریافت شد."
         else:
-            # بررسی کن که آیا مدل درخواست فراخوانی تابع (جستجو) داده است
             if first_chunk.function_calls:
                 fc = first_chunk.function_calls[0]
                 if fc.name == "search":
@@ -279,7 +280,6 @@ async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str)
                     query = fc.args["query"]
                     search_result_text = await execute_search(query)
                     
-                    # نتیجه جستجو را به مدل برگردان و استریم پاسخ نهایی را دریافت کن
                     response_stream_2 = await chat_session.send_message_stream(
                         content={'parts': [{'function_response': {'name': 'search', 'response': {'result': search_result_text}}}]}
                     )
@@ -287,12 +287,12 @@ async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str)
                 else:
                     full_response = f"Unsupported function call: {fc.name}"
             else:
-                # اگر فراخوانی تابع نبود، پاسخ عادی را استریم کن
                 combined_stream_gen = combine_stream(first_chunk, stream_iterator)
                 full_response = await _handle_response_streaming_genai1(combined_stream_gen, sent_message, bot)
 
         final_text = escape(full_response or "پاسخی دریافت نشد.")
         text_parts = split_long_message(final_text, 4000)
+        
         for i, part in enumerate(text_parts):
             try:
                 if i == 0:
@@ -305,10 +305,11 @@ async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str)
                         await bot.edit_message_text(part, chat_id=sent_message.chat.id, message_id=sent_message.message_id)
                     else:
                         await bot.send_message(message.chat.id, part)
+        
         user_chats[user_id]["stats"]["messages"] += 1
         serializable_history = []
         if chat_session and chat_session.history:
-            for content in chat_session.history:  
+            for content in chat_session.history:
                 is_tool_message = any(hasattr(p, 'function_call') or hasattr(p, 'function_response') for p in content.parts)
                 if is_tool_message:
                     continue
@@ -317,6 +318,7 @@ async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str)
                     serializable_history.append({'role': content.role, 'parts': parts_to_save})
         user_chats[user_id]["history"] = serializable_history
         asyncio.create_task(save_user_chats())
+
     except Exception as e:
         traceback.print_exc()
         err = f"{error_info}\nجزئیات خطا: {str(e)}"
@@ -330,14 +332,7 @@ async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str)
 
 
 
-async def gemini_process_image_stream(
-    bot: TeleBot,
-    message: Message,
-    m: str,
-    photo_file: bytes,
-    model_type: str,
-    status_message: Message = None
-):
+async def gemini_process_image_stream(bot: TeleBot,message: Message,m: str,photo_file: bytes,model_type: str,status_message: Message = None):
     api_key = random.choice(GEMINI_API_KEYS)
     genai.configure(api_key=api_key)
 
