@@ -187,9 +187,11 @@ async def _handle_response_streaming(response, sent_message, bot, chat_session=N
                     query = function_call.args["query"]
                     search_result_text = await execute_search(query)
                     
-                    # ارسال نتیجه جستجو به مدل و دریافت استریم جدید
+                    # --- راه حل نهایی و صحیح ---
+                    # ساختن پاسخ تابع با استفاده از کلاس‌های موجود در ماژول `types`
+                    # این روش استاندارد و مستند شده کتابخانه است.
                     response_after_func = await chat_session.send_message_async(
-                        genai.Part(function_response=types.FunctionResponse(
+                        types.Part(function_response=types.FunctionResponse(
                             name="search",
                             response={"result": search_result_text}
                         )),
