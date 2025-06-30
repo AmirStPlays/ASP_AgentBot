@@ -347,7 +347,8 @@ async def gemini_process_image_stream(
 
 
 async def gemini_process_voice(bot: TeleBot, message: Message, voice_file: bytes, model_type: str):
-    client = get_random_client()
+    api_key = random.choice(GEMINI_API_KEYS)
+    genai.configure(api_key=api_key)
     user_id_str = str(message.from_user.id)
     _initialize_user(user_id_str)
     sent_message = None
@@ -369,18 +370,12 @@ async def gemini_process_voice(bot: TeleBot, message: Message, voice_file: bytes
             "لطفاً فقط متن دقیق گفته‌شده در فایل صوتی زیر را بدون هیچ توضیح یا اصلاحی بنویس.\n"
             "ممکن است زبان گفتار فارسی، انگلیسی یا ترکیبی باشد، بنابراین با دقت همان را بازنویسی کن.\n"
         )
-        
-        contents = [
-            prompt,
-            {"mime_type": "audio/ogg", "data": voice_file}
-        ]
-        
-        response = await client.aio.models.generate_content(
-            model=model_type,
-            contents=contents,
-            safety_settings=safety_settings
-        )
 
+        model = genai.GenerativeModel(model_name=model_type, safety_settings=safety_settings)
+        response = await model.generate_content_async([
+            {"text": prompt},
+            {"mime_type": "audio/ogg", "data": voice_file}
+        ])
 
         transcribed_text = response.text.strip() if response.text else "متنی از این پیام صوتی تشخیص داده نشد."
         transcribed_text = escape(transcribed_text)
@@ -395,6 +390,7 @@ async def gemini_process_voice(bot: TeleBot, message: Message, voice_file: bytes
             await bot.edit_message_text(error_message_detail, chat_id=sent_message.chat.id, message_id=sent_message.message_id)
         else:
             await bot.reply_to(message, error_message_detail)
+
 
 
 
