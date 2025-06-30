@@ -169,12 +169,40 @@ async def execute_search(query: str):
         return "An error occurred while searching the web."
 
 
-async def _handle_response_streaming(response, sent_message, bot):
+async def _handle_response_streaming(response, sent_message, bot, chat_session=None):
     full_response = ""
     last_update = time.time()
     update_interval = conf["streaming_update_interval"]
     try:
         async for chunk in response:
+            # بررسی وجود تماس تابع در هر قطعه از استریم
+            if (chunk.candidates and chunk.candidates[0].content.parts and
+                    hasattr(chunk.candidates[0].content.parts[0], 'function_call')):
+                
+                function_call = chunk.candidates[0].content.parts[0].function_call
+                
+                # اگر تماس تابع برای جستجو بود
+                if function_call.name == "search" and chat_session:
+                    await bot.edit_message_text("... در حال جستجو در وب 🔍", chat_id=sent_message.chat.id, message_id=sent_message.message_id)
+                    query = function_call.args["query"]
+                    search_result_text = await execute_search(query)
+                    
+                    # ارسال نتیجه جستجو به مدل و دریافت استریم جدید
+                    response_after_func = await chat_session.send_message_async(
+                        genai.Part(function_response=types.FunctionResponse(
+                            name="search",
+                            response={"result": search_result_text}
+                        )),
+                        stream=True
+                    )
+                    
+                    # پردازش استریم جدید برای دریافت پاسخ نهایی و بازگرداندن آن
+                    return await _handle_response_streaming(response_after_func, sent_message, bot)
+                
+                # اگر تابع دیگری بود، فعلا نادیده بگیر
+                continue
+
+            # اگر قطعه حاوی متن بود، آن را پردازش کن
             if hasattr(chunk, 'text') and chunk.text:
                 full_response += chunk.text
                 current_time = time.time()
@@ -182,13 +210,13 @@ async def _handle_response_streaming(response, sent_message, bot):
                     if full_response.strip():
                         await bot.edit_message_text(escape(full_response + "✍️"), chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
                         last_update = current_time
-            elif chunk.candidates and chunk.candidates[0].content.parts[0].function_call:
-                print("Warning: Function call detected inside streaming handler. Should be handled by main logic.")
-                continue
+
     except (ValueError, generation_types.StopCandidateException) as e:
         print(f"Streaming stopped for a valid reason: {e}")
     except Exception as e:
         print(f"Error during streaming: {e}")
+        traceback.print_exc()
+
     return full_response
 
 
@@ -229,45 +257,22 @@ async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str)
 
         sent_message = await bot.reply_to(message, before_generate_info)
         
-        response_generator = await chat_session.send_message_async(m, stream=True)
+        # همیشه یک درخواست استریم ارسال کن
+        response_stream = await chat_session.send_message_async(m, stream=True)
         
-        # Check for function call in the first chunk
-        first_chunk = await anext(response_generator)
-        candidate = first_chunk.candidates[0]
-
-        if candidate.content.parts and candidate.content.parts[0].function_call:
-            function_call = candidate.content.parts[0].function_call
-            if function_call.name == "search":
-                await bot.edit_message_text("... در حال جستجو در وب 🔍", chat_id=sent_message.chat.id, message_id=sent_message.message_id)
-                query = function_call.args["query"]
-                search_result_text = await execute_search(query)
-                
-                # FIX: Use genai.Part instead of types.Part
-                response = await chat_session.send_message_async(
-                    genai.Part(function_response=types.FunctionResponse(
-                        name="search",
-                        response={"result": search_result_text}
-                    )),
-                    stream=True
-                )
-                full_response = await _handle_response_streaming(response, sent_message, bot)
-        else:
-            # Reconstruct the generator to include the first chunk
-            async def combined_generator():
-                yield first_chunk
-                async for chunk in response_generator:
-                    yield chunk
-            
-            full_response = await _handle_response_streaming(combined_generator(), sent_message, bot)
-
+        # پردازش استریم را به تابع مدیریت‌کننده بسپار
+        full_response = await _handle_response_streaming(response_stream, sent_message, bot, chat_session)
 
         final_text = escape(full_response or "پاسخی دریافت نشد.")
         
+        # اگر پیام نهایی طولانی است، آن را تقسیم کن
         text_parts = split_long_message(final_text, 4000)
         for i, part in enumerate(text_parts):
             if i == 0:
+                # پیام اول را ویرایش کن
                 await bot.edit_message_text(part, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
             else:
+                # بخش‌های بعدی را به عنوان پیام جدید ارسال کن
                 await bot.send_message(message.chat.id, part, parse_mode="MarkdownV2")
 
         user_chats[user_id]["stats"]["messages"] += 1
