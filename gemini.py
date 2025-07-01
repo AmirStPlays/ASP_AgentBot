@@ -11,13 +11,10 @@ from telebot.types import Message
 import aiofiles
 import json
 import time
-import google.generativeai as genai
 from google import genai as genai1
-from google.generativeai.types import generation_types
-from google.generativeai import types
 from md2tgmd import escape
 from config import conf, safety_settings, generation_config
-from duckduckgo_search import duckduckgo_search
+
 
 PRO_MODELS = {
     conf["model_1"],
@@ -40,24 +37,7 @@ GEMINI_API_KEYS = os.getenv("gemini_api_keys", "").split(",")
 user_chats = {}
 USER_CHATS_FILE = "user_chats_data.json"
 _save_lock = asyncio.Lock()
-search_tool = types.Tool(
-    function_declarations=[
-        types.FunctionDeclaration(
-            name="search",
-            description="Search the web for information",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "The search query"
-                    }
-                },
-                "required": ["query"]
-            }
-        )
-    ]
-)
+
 
 
 
@@ -145,24 +125,6 @@ def _get_tools_for_model(model_type: str):
         return [search_tool]
     return None
 
-async def execute_search(query: str):
-    """Performs a web search using DuckDuckGo and returns formatted results."""
-    try:
-        async with duckduckgo_search() as ddgs:
-            results = [r async for r in ddgs.text(query, max_results=5)]
-        if not results:
-            return "No search results found."
-        
-        formatted_results = []
-        for i, result in enumerate(results, 1):
-            formatted_results.append(
-                f"Result {i}:\nTitle: {result.get('title')}\n"
-                f"Snippet: {result.get('body')}\nURL: {result.get('href')}\n"
-            )
-        return "\n".join(formatted_results)
-    except Exception as e:
-        print(f"Error during web search: {e}")
-        return "An error occurred while searching the web."
 
 
 search_tool = {'google_search': {}}
@@ -378,50 +340,67 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
 
 
 
-async def gemini_process_voice(bot: TeleBot, message: Message, voice_file: bytes, model_type: str):
-    api_key = random.choice(GEMINI_API_KEYS)
-    genai.configure(api_key=api_key)
-    user_id_str = str(message.from_user.id)
-    _initialize_user(user_id_str)
-    sent_message = None
-    user = message.from_user
-    first_name = user.first_name or "کاربر"
-
-    time_zone = timezone(timedelta(hours=3, minutes=30))
-    date = datetime.now(time_zone).strftime("%d/%m/%Y")
-    timenow = datetime.now(time_zone).strftime("%H:%M:%S")
-    time_prompt = f"اطلاعات تاریخ و زمان:\nتاریخ: {date}\nزمان: {timenow}"
-    user_prompt = f"نام کاربر: {first_name}"
-    system_prompt = f"{user_prompt}\n{time_prompt}"
+async def gemini_process_voice(bot: TeleBot, message: Message, voice_file: bytes, model_type: str, status_message: Message = None):
+    user_id = str(message.from_user.id)
+    _initialize_user(user_id)
+    sent_message = status_message
 
     try:
-        sent_message = await bot.reply_to(message, "در حال تبدیل ویس به متن... 🎤")
+        client = get_random_client()
+
+        chat_session_key = 'chat_session'
+        chat_model_key = 'chat_model'
+        chat_session = user_chats[user_id].get(chat_session_key)
+        current_model = user_chats[user_id].get(chat_model_key)
+
+        if not chat_session or current_model != model_type:
+            user = message.from_user
+            first_name = user.first_name or "کاربر"
+            tz = timezone(timedelta(hours=3, minutes=30))
+            date = datetime.now(tz).strftime("%d/%m/%Y")
+            timenow = datetime.now(tz).strftime("%H:%M:%S")
+            system_prompt_text = (
+                f"نام کاربر: {first_name}\n"
+                f"تاریخ: {date}\nزمان: {timenow}\n\n"
+                f"{default_system_prompt}"
+            )
+            initial_history = [
+                {'role': 'user', 'parts': [{'text': system_prompt_text}]},
+                {'role': 'model', 'parts': [{'text': "باشه، متوجه شدم. آماده‌ام."}]}
+            ]
+            chat_session = client.aio.chats.create(
+                model=model_type,
+                history=initial_history
+            )
+            user_chats[user_id][chat_session_key] = chat_session
+            user_chats[user_id][chat_model_key] = model_type
 
         prompt = (
-            f"{system_prompt}\n"
             "لطفاً فقط متن دقیق گفته‌شده در فایل صوتی زیر را بدون هیچ توضیح یا اصلاحی بنویس.\n"
             "ممکن است زبان گفتار فارسی، انگلیسی یا ترکیبی باشد، بنابراین با دقت همان را بازنویسی کن.\n"
         )
 
-        model = genai.GenerativeModel(model_name=model_type, safety_settings=safety_settings)
-        response = await model.generate_content_async([
-            {"text": prompt},
-            {"mime_type": "audio/ogg", "data": voice_file}
-        ])
+        if not sent_message:
+            sent_message = await bot.reply_to(message, "در حال تبدیل ویس به متن... 🎤")
 
-        transcribed_text = response.text.strip() if response.text else "متنی از این پیام صوتی تشخیص داده نشد."
-        transcribed_text = escape(transcribed_text)
+        contents = [{"text": prompt}, {"mime_type": "audio/ogg", "data": voice_file}]
+        response = await chat_session.send_message(contents)
 
-        final_text = f"```\n{transcribed_text}\n```"
+        transcribed_text = response.text.strip() if hasattr(response, "text") and response.text else "متنی از این پیام صوتی تشخیص داده نشد."
+        final_text = f"```\n{escape(transcribed_text)}\n```"
+
         await bot.edit_message_text(final_text, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
+
+        user_chats[user_id]["stats"]["messages"] += 1
+        asyncio.create_task(save_user_chats())
 
     except Exception as e:
         traceback.print_exc()
-        error_message_detail = f"{error_info}\nجزئیات خطا: {str(e)}"
+        err = escape(f"{error_info}\nجزئیات خطا: {str(e)}")
         if sent_message:
-            await bot.edit_message_text(error_message_detail, chat_id=sent_message.chat.id, message_id=sent_message.message_id)
+            await bot.edit_message_text(err, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
         else:
-            await bot.reply_to(message, error_message_detail)
+            await bot.reply_to(message, err, parse_mode="MarkdownV2")
 
 
 
