@@ -348,33 +348,6 @@ async def gemini_process_voice(bot: TeleBot, message: Message, voice_file: bytes
     try:
         client = get_random_client()
 
-        chat_session_key = 'chat_session'
-        chat_model_key = 'chat_model'
-        chat_session = user_chats[user_id].get(chat_session_key)
-        current_model = user_chats[user_id].get(chat_model_key)
-
-        if not chat_session or current_model != model_type:
-            user = message.from_user
-            first_name = user.first_name or "کاربر"
-            tz = timezone(timedelta(hours=3, minutes=30))
-            date = datetime.now(tz).strftime("%d/%m/%Y")
-            timenow = datetime.now(tz).strftime("%H:%M:%S")
-            system_prompt_text = (
-                f"نام کاربر: {first_name}\n"
-                f"تاریخ: {date}\nزمان: {timenow}\n\n"
-                f"{default_system_prompt}"
-            )
-            initial_history = [
-                {'role': 'user', 'parts': [{'text': system_prompt_text}]},
-                {'role': 'model', 'parts': [{'text': "باشه، متوجه شدم. آماده‌ام."}]}
-            ]
-            chat_session = client.aio.chats.create(
-                model=model_type,
-                history=initial_history
-            )
-            user_chats[user_id][chat_session_key] = chat_session
-            user_chats[user_id][chat_model_key] = model_type
-
         prompt = (
             "لطفاً فقط متن دقیق گفته‌شده در فایل صوتی زیر را بدون هیچ توضیح یا اصلاحی بنویس.\n"
             "ممکن است زبان گفتار فارسی، انگلیسی یا ترکیبی باشد، بنابراین با دقت همان را بازنویسی کن.\n"
@@ -382,9 +355,15 @@ async def gemini_process_voice(bot: TeleBot, message: Message, voice_file: bytes
 
         if not sent_message:
             sent_message = await bot.reply_to(message, "در حال تبدیل ویس به متن... 🎤")
+        contents = [
+            prompt,
+            {'inline_data': {'mime_type': 'audio/ogg', 'data': voice_file}}
+        ]
 
-        contents = [{"text": prompt}, {"mime_type": "audio/ogg", "data": voice_file}]
-        response = await chat_session.send_message(contents)
+        response = await client.aio.models.generate_content(
+            model=model_type,
+            contents=contents
+        )
 
         transcribed_text = response.text.strip() if hasattr(response, "text") and response.text else "متنی از این پیام صوتی تشخیص داده نشد."
         final_text = f"```\n{escape(transcribed_text)}\n```"
@@ -396,11 +375,19 @@ async def gemini_process_voice(bot: TeleBot, message: Message, voice_file: bytes
 
     except Exception as e:
         traceback.print_exc()
-        err = escape(f"{error_info}\nجزئیات خطا: {str(e)}")
+        err_detail = str(e)
+        if "message is too long" in err_detail or "ValidationError" in err_detail:
+            err_detail = "خطایی در پردازش درخواست رخ داد."
+        
+        err = escape(f"{error_info}\nجزئیات خطا: {err_detail}")
+
         if sent_message:
-            await bot.edit_message_text(err, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
+            try:
+                await bot.edit_message_text(err, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
+            except Exception:
+                await bot.reply_to(message, err.replace('\\', ''))
         else:
-            await bot.reply_to(message, err, parse_mode="MarkdownV2")
+            await bot.reply_to(message, err.replace('\\', ''))
 
 
 
