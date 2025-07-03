@@ -130,22 +130,39 @@ def pre_command_checks(func):
 
 
 def mono(text: str) -> str:
-    return f"\\`{escape(text)}\\`"
+    return f"`{escape(text)}`"
 
 async def show_help(message: Message, bot: TeleBot):
     title = "راهنمای جامع استفاده از بات"
-    img_description_raw = """برای تولید عکس توسط ربات ابتدا این دستور را از طریق منوی پایین چپ نگه داشته تا عبارت آن بر روی کیبورد نمایان بشه.
-پس از این متن خودتون رو جلوی دستور برای ساخت عکس بنویسید.
-این رو هم بدونید که ممکنه این عملیات زمانبر باشه"""
-    edit_description_raw = """برای اینکار یا یک عکس از گالری خود و یا یک عکس از تاریخچه چتتون انتخاب کنید (روی پیامش ریپلای بزنید)
-بعد از اینکار مثل دستور قبل عبارت /edit را پشت کپشن یا پیام ریپلای زده شده خودتون بنویسین و ادیتی که میخواین روی عکس اعمال بشه رو تایپ کنید.
-این عملیات هم میتونه کمی زمانبر باشه."""
-    switch_description_raw = "با استفاده از این دستور میتونین مدل پردازش متن رو عوض کنید"
-    help_description_raw = "برای دیدن راهنمای استفاده از بات از این دستور استفاده کنید"
+    
+    img_description_raw = """برای تولید عکس، از دستور /img استفاده کرده و در ادامه، توضیح تصویر مورد نظر خود را بنویسید.
+مثال: `/img یک گربه سفید در فضا`
+این عملیات ممکن است کمی زمان‌بر باشد."""
+
+    edit_description_raw = """برای ویرایش یک عکس، ابتدا روی پیام حاوی عکس ریپلای کنید. سپس دستور /edit را نوشته و در ادامه، توضیح تغییری که می‌خواهید اعمال شود را بنویسید.
+مثال: `/edit رنگ ماشین را قرمز کن`"""
+
+    file_description_raw = """برای پردازش فایل (مانند خلاصه‌سازی PDF، توضیح کد، یا پرسش از محتوای فایل متنی) می‌توانید به دو روش عمل کنید:
+۱. ارسال مستقیم فایل: فایل خود را (با حجم کمتر از ۲۰ مگابایت) ارسال کرده و در قسمت کپشن (توضیحات) فایل، سوال یا دستور خود را بنویسید.
+۲. ریپلای روی فایل: روی فایلی که قبلاً در چت ارسال شده، ریپلای کرده و سوال خود را به عنوان متن ریپلای بنویسید.
+اگر کپشن یا متن ریپلای خالی باشد، ربات یک تحلیل کلی از فایل ارائه می‌دهد."""
+    
+    supported_formats_raw = """- *کدنویسی:* `PY`, `ipynb`, `java`, `c`, `cpp`, `cs`, `h`, `hpp`, `swift`, `js`, `ts`, `html`, `css`, `php`, `rb`, `go`, `rs`, `kt`, `kts`
+- *تصویر:* `PNG`, `JPEG`, `WEBP`, `HEIC`, `HEIF`
+- *صدا:* `MP3`, `WAV`, `MIDI`, `OGG`, `AAC`, `FLAC`
+- *ویدیو:* `MP4`, `MPEG`, `MOV`, `AVI`, `FLV`, `WMV`, `WEBM`, `3GP` (ربات فریم‌های کلیدی را تحلیل می‌کند)
+- *متن ساده:* `TXT`, `RTF`, `CSV`, `TSV`, `PDF`, `DOCX`, `PPTX`, `EPUB`"""
+
+    switch_description_raw = "با استفاده از این دستور، می‌توانید بین مدل‌های مختلف پردازش متن جابجا شوید. این دستور فقط در چت خصوصی کار می‌کند."
+    
     group_text_raw = "در گروه‌ها، برای اینکه ربات به پیام متنی شما پاسخ دهد، پیام خود را با `.` شروع کنید. مثال: `.سلام خوبی؟`"
-    group_image_raw = "در گروه‌ها، برای پردازش یک عکس (مثلاً توصیف آن)، کپشن عکس را با `.` شروع کنید. مثال: `.این عکس چیست؟`"
-    footer_raw = "در صورت داشتن هرگونه ابهام یا مشکل در ربات حتما به من بگید تا درستش کنم"
-    admin_id_raw = "اینم آیدیم: @AmirStPlays"
+    
+    group_media_raw = """در گروه‌ها، برای پردازش عکس یا فایل، حتماً باید کپشن یا متن ریپلای خود را با `.` شروع کنید.
+مثال برای عکس: `.این عکس را توصیف کن`
+مثال برای فایل: `.این کد پایتون چه کاری انجام می‌دهد؟`"""
+
+    footer_raw = "در صورت داشتن هرگونه ابهام یا مشکل، حتماً به ادمین اطلاع دهید."
+    admin_id_raw = "آیدی ادمین: @AmirStPlays"
 
     help_text = f"*{escape(title)}*\n\n"
 
@@ -154,19 +171,22 @@ async def show_help(message: Message, bot: TeleBot):
 
     help_text += f"{mono('/edit')} {escape('(ویرایش تصویر با ریپلای)')}\n"
     help_text += f"```\n{escape(edit_description_raw)}\n```\n\n"
+    
+    help_text += f"{mono('فایل')} {escape('(پردازش PDF، کد و غیره)')}\n"
+    help_text += f"```\n{escape(file_description_raw)}\n```\n"
+    help_text += f"*{escape('فرمت‌های فایل پشتیبانی شده:')}*\n"
+    help_text += f"```\n{escape(supported_formats_raw)}\n```\n\n"
 
-    help_text += f"{mono('/switch')} {escape('(تغییر مدل متن در چت خصوصی)')}\n"
+    help_text += f"{mono('/switch')} {escape('(تغییر مدل متن در PV)')}\n"
     help_text += f"```\n{escape(switch_description_raw)}\n```\n\n"
 
-    help_text += f"{mono('/help')} {escape('(همین راهنما)')}\n"
-    help_text += f"```\n{escape(help_description_raw)}\n```\n\n"
+    help_text += f"*{escape('نکات استفاده در گروه')}*\n"
+    help_text += f"{mono('.')} {escape('(فراخوانی ربات برای متن)')}\n"
+    help_text += f"```\n{escape(group_text_raw)}\n```\n"
+    help_text += f"{mono('.')} {escape('(فراخوانی ربات برای عکس و فایل)')}\n"
+    help_text += f"```\n{escape(group_media_raw)}\n```\n\n"
 
-    help_text += f"{escape('5. استفاده در گروه (متن)')}\n"
-    help_text += f"```\n{escape(group_text_raw)}\n```\n\n"
-
-    help_text += f"{escape('6. استفاده در گروه (عکس)')}\n"
-    help_text += f"```\n{escape(group_image_raw)}\n```\n\n"
-
+    help_text += f"*{escape('پشتیبانی')}*\n"
     help_text += f"{escape(footer_raw)}\n"
     help_text += f"{escape(admin_id_raw)}"
 
