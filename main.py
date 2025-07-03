@@ -56,6 +56,7 @@ async def run_bot():
     
     bot.register_message_handler(handlers.gemini_photo_handler, content_types=["photo"], pass_bot=True)
     bot.register_message_handler(handlers.gemini_voice_handler, content_types=["voice"], pass_bot=True)
+    bot.register_message_handler(handlers.gemini_document_handler, content_types=['document'], pass_bot=True)
 
     bot.register_message_handler(
         handlers.gemini_group_text_handler,
