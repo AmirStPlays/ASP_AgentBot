@@ -17,12 +17,19 @@ model_1                 =       conf["model_1"]
 model_2                 =       conf["model_2"]
 model_3                 =       conf["model_3"]
 default_image_prompt    =       conf.get("default_image_processing_prompt", "این تصویر را توصیف کن.")
+default_image_prompt    =       conf.get("default_image_prompt", "این تصویر را توصیف کن.")
 
 user_model_preference = {}
 
 async def _build_prompt_with_reply_context(message: Message, bot: TeleBot):
+    """
+    Builds a prompt considering the replied message context.
+    Handles replies to text, photos, and documents.
+    Returns: (final_prompt, file_info, status_message)
+    - file_info is a dict {'data': bytes, 'mime_type': str} or None.
+    """
     new_prompt = message.text or message.caption or ""
-    photo_file = None
+    file_info = None
     status_message = None
 
     if not message.reply_to_message:
@@ -31,18 +38,50 @@ async def _build_prompt_with_reply_context(message: Message, bot: TeleBot):
     replied_msg = message.reply_to_message
     context_prefix = ""
 
+    # Check for reply to a photo
     if replied_msg.photo:
         try:
             status_message = await bot.reply_to(message, pm["photo_proccessing_prompt"])
             file_path = await bot.get_file(replied_msg.photo[-1].file_id)
-            photo_file = await bot.download_file(file_path.file_path)
-            final_prompt = new_prompt if new_prompt else default_image_prompt
-            return final_prompt, photo_file, status_message
+            photo_bytes = await bot.download_file(file_path.file_path)
+            # Use default prompt if the reply text is empty
+            final_prompt = new_prompt if new_prompt.strip() else default_image_prompt
+            file_info = {'data': photo_bytes, 'mime_type': 'image/jpeg'}
+            return final_prompt, file_info, status_message
         except Exception as e:
             traceback.print_exc()
-            await bot.reply_to(message, f"{error_info}\nخطا در دانلود عکس کانتکست: {e}")
+            err_msg = f"{error_info}\nخطا در دانلود عکس کانتکست: {e}"
+            if status_message:
+                await bot.edit_message_text(err_msg, chat_id=status_message.chat.id, message_id=status_message.message_id)
+            else:
+                await bot.reply_to(message, err_msg)
             return None, None, status_message
 
+    # Check for reply to a document
+    elif replied_msg.document:
+        try:
+            status_message = await bot.reply_to(message, "در حال دانلود فایل الصاق شده... 📥")
+            file_path = await bot.get_file(replied_msg.document.file_id)
+            if file_path.file_size > 20 * 1024 * 1024:
+                await bot.edit_message_text("فایل الصاق شده بزرگتر از 20MB است و قابل پردازش نیست.", chat_id=status_message.chat.id, message_id=status_message.message_id)
+                return None, None, status_message
+            
+            doc_bytes = await bot.download_file(file_path.file_path)
+            mime_type = replied_msg.document.mime_type or 'application/octet-stream'
+            # Use a default prompt if the reply text is empty
+            final_prompt = new_prompt if new_prompt.strip() else pm["default_file_prompt"]
+            file_info = {'data': doc_bytes, 'mime_type': mime_type}
+            return final_prompt, file_info, status_message
+        except Exception as e:
+            traceback.print_exc()
+            err_msg = f"{error_info}\nخطا در دانلود فایل کانتکست: {e}"
+            if status_message:
+                await bot.edit_message_text(err_msg, chat_id=status_message.chat.id, message_id=status_message.message_id)
+            else:
+                await bot.reply_to(message, err_msg)
+            return None, None, status_message
+
+    # Handle reply to a text message
     elif replied_msg.text:
         sender = "کاربر"
         if replied_msg.from_user.is_bot:
@@ -205,18 +244,17 @@ async def switch(message: Message, bot: TeleBot) -> None:
 
 @pre_command_checks
 async def gemini_private_handler(message: Message, bot: TeleBot) -> None:
-    final_prompt, photo_file, status_message = await _build_prompt_with_reply_context(message, bot)
-    if final_prompt is None:
+    final_prompt, file_info, status_message = await _build_prompt_with_reply_context(message, bot)
+    if final_prompt is None and file_info is None:
         if status_message: await bot.delete_message(status_message.chat.id, status_message.message_id)
         return
     if not final_prompt.strip(): return
 
     user_id_str = str(message.from_user.id)
-    prefers_model_1 = user_model_preference.get(user_id_str, True)
-    model_to_use = model_1 if prefers_model_1 else model_2
+    model_to_use = model_1 if user_model_preference.get(user_id_str, True) else model_2
     
-    if photo_file:
-        await gemini.gemini_process_image_stream(bot, message, final_prompt, photo_file, model_to_use, status_message)
+    if file_info:
+        await gemini.gemini_process_file_stream(bot, message, final_prompt, file_info, model_to_use, status_message)
     else:
         await gemini.gemini_stream(bot, message, final_prompt, model_to_use)
 
@@ -224,25 +262,31 @@ async def gemini_private_handler(message: Message, bot: TeleBot) -> None:
 async def gemini_group_text_handler(message: Message, bot: TeleBot) -> None:
     text = message.text.strip()
     if not text.startswith('.'): return
+    
+    # We modify message.text in-place for _build_prompt_with_reply_context to work correctly
     message.text = text[1:].strip()
-    if not message.text:
+    
+    # If the text is empty after removing '.', and it's not a reply, it's an invalid command.
+    if not message.text and not message.reply_to_message:
         await bot.reply_to(message, pm["group_prompt_needed"])
         return
         
-    final_prompt, photo_file, status_message = await _build_prompt_with_reply_context(message, bot)
-    if final_prompt is None:
+    final_prompt, file_info, status_message = await _build_prompt_with_reply_context(message, bot)
+    
+    if final_prompt is None and file_info is None:
         if status_message: await bot.delete_message(status_message.chat.id, status_message.message_id)
         return
 
     user_id_str = str(message.from_user.id)
-    prefers_model_1 = user_model_preference.get(user_id_str, True)
-    model_to_use = model_1 if prefers_model_1 else model_2
+    model_to_use = model_1 if user_model_preference.get(user_id_str, True) else model_2
     
-    if photo_file:
-        await gemini.gemini_process_image_stream(bot, message, final_prompt, photo_file, model_to_use, status_message)
+    if file_info:
+        await gemini.gemini_process_file_stream(bot, message, final_prompt, file_info, model_to_use, status_message)
     else:
+        if not final_prompt: # Check again in case it was a reply with empty text
+             await bot.reply_to(message, pm["group_prompt_needed"])
+             return
         await gemini.gemini_stream(bot, message, final_prompt, model_to_use)
-
 @pre_command_checks
 async def gemini_photo_handler(message: Message, bot: TeleBot) -> None:
     caption = (message.caption or "").strip()
@@ -317,6 +361,37 @@ async def gemini_edit_handler(message: Message, bot: TeleBot) -> None:
         await bot.reply_to(message, f"{error_info}\nDetails: {str(e)}")
         return
     await gemini.gemini_edit(bot, message, text_prompt, photo_file)
+
+@pre_command_checks
+async def gemini_document_handler(message: Message, bot: TeleBot) -> None:
+ 
+    caption = (message.caption or "").strip()
+    is_group = message.chat.type != "private"
+    
+    if is_group and not caption.startswith("."): return
+
+    prompt_to_use = (caption[1:].strip() if is_group else caption) or pm["default_file_prompt"]
+
+    try:
+        status_message = await bot.reply_to(message, "در حال دانلود و آماده‌سازی فایل... 📥")
+        file_info_tg = await bot.get_file(message.document.file_id)
+        
+        if file_info_tg.file_size > 20 * 1024 * 1024:
+            await bot.edit_message_text("حجم فایل بیشتر از 20 مگابایت است.", chat_id=status_message.chat.id, message_id=status_message.message_id)
+            return
+
+        file_bytes = await bot.download_file(file_info_tg.file_path)
+        mime_type = message.document.mime_type or 'application/octet-stream'
+        file_info = {'data': file_bytes, 'mime_type': mime_type}
+
+    except Exception as e:
+        traceback.print_exc()
+        await bot.edit_message_text(f"{error_info}\nخطا در دانلود فایل: {str(e)}", chat_id=status_message.chat.id, message_id=status_message.message_id)
+        return
+
+    user_id_str = str(message.from_user.id)
+    model_to_use = model_1 if user_model_preference.get(user_id_str, True) else model_2
+    await gemini.gemini_process_file_stream(bot, message, prompt_to_use, file_info, model_to_use, status_message)
 
 @pre_command_checks
 async def draw_handler(message: Message, bot: TeleBot) -> None:
