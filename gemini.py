@@ -29,6 +29,7 @@ before_generate_info = conf["before_generate_info"]
 download_pic_notify = conf["download_pic_notify"]
 default_system_prompt = conf.get("default_system_prompt", "").strip()
 default_image_processing_prompt = conf.get("default_image_processing_prompt", "")
+default_image_prompt = conf.get("default_image_prompt", "این تصویر را توصیف کن.")
 
 
 load_dotenv()
@@ -389,7 +390,122 @@ async def gemini_process_voice(bot: TeleBot, message: Message, voice_file: bytes
         else:
             await bot.reply_to(message, err.replace('\\', ''))
 
+async def gemini_process_file_stream(bot: TeleBot, message: Message, m: str, file_info: dict, model_type: str, status_message: Message = None):
+    user_id = str(message.from_user.id)
+    _initialize_user(user_id)
+    sent_message = status_message
+    prompt_to_use = m.strip() or conf["persian_messages"]["default_file_prompt"]
 
+    try:
+        client = get_random_client()
+        history_before_this_turn = user_chats[user_id].get("history", [])
+        api_contents = list(history_before_this_turn)
+        file_data = file_info['data']
+        mime_type = file_info['mime_type']
+        
+        new_user_parts = [{'text': prompt_to_use}]
+        if 'image' in mime_type:
+            new_user_parts.append(Image.open(io.BytesIO(file_data)))
+        else:
+            new_user_parts.append({'inline_data': {'mime_type': mime_type, 'data': file_data}})
+        
+        api_contents.append({'role': 'user', 'parts': new_user_parts})
+
+        if not history_before_this_turn:
+            user = message.from_user
+            first_name = user.first_name or "کاربر"
+            tz = timezone(timedelta(hours=3, minutes=30))
+            date = datetime.now(tz).strftime("%d/%m/%Y")
+            timenow = datetime.now(tz).strftime("%H:%M:%S")
+            system_prompt_text = (
+                f"نام کاربر: {first_name}\n"
+                f"تاریخ: {date}\nزمان: {timenow}\n\n"
+                f"{default_system_prompt}"
+            )
+            api_contents.insert(0, {'role': 'user', 'parts': [{'text': system_prompt_text}]})
+            api_contents.insert(1, {'role': 'model', 'parts': [{'text': "باشه، متوجه شدم. آماده‌ام."}]})
+
+        tools = [search_tool] if model_type in PRO_MODELS else None
+        gen_config = {'tools': tools} if tools else {}
+
+        if not sent_message:
+            sent_message = await bot.reply_to(message, before_generate_info)
+        else: 
+            await bot.edit_message_text("درحال پردازش فایل شما ... 🧐", chat_id=sent_message.chat.id, message_id=sent_message.message_id)
+        
+        response_stream = await client.aio.models.generate_content_stream(
+            model=model_type,
+            contents=api_contents,
+            config=gen_config,
+        )
+        
+        full_response = ""
+        last_update = time.time()
+        update_interval = conf["streaming_update_interval"]
+
+        async for chunk in response_stream:
+            if hasattr(chunk, 'text') and chunk.text:
+                full_response += chunk.text
+                current_time = time.time()
+                if current_time - last_update >= update_interval and full_response.strip():
+                    try:
+                        await bot.edit_message_text(escape(full_response + "✍️"), chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
+                    except Exception as e:
+                        if "message is not modified" not in str(e).lower():
+                            await bot.edit_message_text(full_response + "✍️", chat_id=sent_message.chat.id, message_id=sent_message.message_id)
+                    last_update = current_time
+
+        final_text = escape(full_response or "پاسخی دریافت نشد.")
+        text_parts = split_long_message(final_text, 4000)
+
+        for i, part in enumerate(text_parts):
+            try:
+                if i == 0:
+                    await bot.edit_message_text(part, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
+                else:
+                    await bot.send_message(message.chat.id, part, parse_mode="MarkdownV2")
+            except Exception:
+                if i == 0:
+                    await bot.edit_message_text(part, chat_id=sent_message.chat.id, message_id=sent_message.message_id)
+                else:
+                    await bot.send_message(message.chat.id, part)
+
+        if full_response:
+            new_history = list(history_before_this_turn)
+            if not history_before_this_turn:
+                new_history.extend(api_contents[:2]) 
+            user_prompt_for_history = f"[کاربر فایلی با این توضیح ارسال کرد: '{prompt_to_use}']"
+            new_history.append({'role': 'user', 'parts': [{'text': user_prompt_for_history}]})
+            new_history.append({'role': 'model', 'parts': [{'text': full_response}]})
+            if len(new_history) > 30:
+                new_history = new_history[-30:]
+            user_chats[user_id]["history"] = new_history
+
+        user_chats[user_id]["stats"]["messages"] += 1
+        asyncio.create_task(save_user_chats())
+
+    except genai1.errors.ServerError as e:
+        traceback.print_exc()
+        err = (f"⚠️ **خطای داخلی سرور گوگل** ⚠️\n\n"
+               f"متاسفانه در حال حاضر سرورهای گوگل در پردازش این فایل دچار مشکل شده‌اند. "
+               f"این یک مشکل موقتی است و به ربات مربوط نمی‌شود.\n\n"
+               f"**راه حل:**\n"
+               f"- لطفاً چند دقیقه دیگر دوباره امتحان کنید.\n"
+               f"- اگر مشکل ادامه داشت، یک فایل دیگر با فرمت متفاوت ارسال کنید.")
+        if sent_message:
+            try: await bot.edit_message_text(escape(err), chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
+            except Exception: await bot.reply_to(message, escape(err), parse_mode="MarkdownV2")
+        else: await bot.reply_to(message, escape(err), parse_mode="MarkdownV2")
+    except Exception as e:
+        traceback.print_exc()
+        err = f"{error_info}\nجزئیات خطا: {str(e).splitlines()[-1]}"
+        if sent_message:
+            try:
+                await bot.edit_message_text(err, chat_id=sent_message.chat.id, message_id=sent_message.message_id)
+            except Exception:
+                await bot.reply_to(message, err)
+        else:
+            await bot.reply_to(message, err)
 
 
 async def gemini_draw(bot: TeleBot, message: Message, m: str):
