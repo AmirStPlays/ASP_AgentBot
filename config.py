@@ -7,9 +7,11 @@ with open("default_image_processing_prompt.txt", "r", encoding="utf-8") as f:
     default_image_processing_prompt = f.read()
 
 
-
 default_image_processing_prompt = full_prompt + "\n\n" + default_image_processing_prompt
-
+default_file_processing_prompt = full_prompt + "\n\n" + """***قوانین مربوط به پردازش فایل***
+- اگر این متن رو میبینی یعنی تو درحال پردازش فایل برای کاربر هستی
+- فایل رو یا با توجه به کپشن کاربر پردازش کن
+- اگر کاربر برای فایلی کپششنی نگذاشته بود، تو محتوای فایل رو بطور خلاصه دربیار و برای خودت ذخیره کن"""
 conf = {
     "error_info":           "⚠️⚠️⚠️\nمشکلی پیش آمد!\nلطفاً درخواست خود را دوباره امتحان کنید و یا با ادمین ارتباط بگیرید!\n@AmirStPlays",
     "before_generate_info": "در حال نوشتن پاسخ ...✍️",
@@ -41,11 +43,12 @@ conf = {
         "group_prompt_needed": "لطفاً پس از نقطه `.`، دستور یا سوال خود را بنویسید. مثال: `.سلام، خوبی؟`",
         "image_prompt_needed_group": "لطفاً پس از نقطه `.` در کپشن عکس، توضیح یا دستور خود را بنویسید. مثال: `.این عکس را توصیف کن`",
         "photo_proccessing_prompt": "درحال پردازش عکس شما ... 🧐",
+        "default_file_prompt": default_file_processing_prompt,
     }
 }
 
 
-CHANNEL_USERNAME = "@ASP_bot_collection"
+CHANNEL_USERNAME = "@ASP_bot_collection2"
 
 
 safety_settings = [
