@@ -402,12 +402,11 @@ async def gemini_process_file_stream(bot: TeleBot, message: Message, m: str, fil
         api_contents = list(history_before_this_turn)
         file_data = file_info['data']
         mime_type = file_info['mime_type']
-        
-        new_user_parts = [{'text': prompt_to_use}]
-        if 'image' in mime_type:
-            new_user_parts.append(Image.open(io.BytesIO(file_data)))
-        else:
-            new_user_parts.append({'inline_data': {'mime_type': mime_type, 'data': file_data}})
+        new_user_parts = [
+            {'text': prompt_to_use},
+            {'inline_data': {'mime_type': mime_type, 'data': file_data}}
+        ]
+
         
         api_contents.append({'role': 'user', 'parts': new_user_parts})
 
