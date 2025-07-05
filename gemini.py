@@ -250,6 +250,7 @@ async def gemini_stream(bot: TeleBot, message: Message, m: str, model_type: str)
             await bot.reply_to(message, err)
 
 
+
 async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, photo_file: bytes, model_type: str, status_message: Message = None):
     user_id = str(message.from_user.id)
     _initialize_user(user_id)
@@ -338,7 +339,6 @@ async def gemini_process_image_stream(bot: TeleBot, message: Message, m: str, ph
             await bot.edit_message_text(err, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
         else:
             await bot.reply_to(message, err, parse_mode="MarkdownV2")
-
 
 
 async def gemini_process_voice(bot: TeleBot, message: Message, voice_file: bytes, model_type: str, status_message: Message = None):
