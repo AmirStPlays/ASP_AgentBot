@@ -398,19 +398,12 @@ async def gemini_process_file_stream(bot: TeleBot, message: Message, m: str, fil
 
     try:
         client = get_random_client()
-        history_before_this_turn = user_chats[user_id].get("history", [])
-        api_contents = list(history_before_this_turn)
-        file_data = file_info['data']
-        mime_type = file_info['mime_type']
-        new_user_parts = [
-            {'text': prompt_to_use},
-            {'inline_data': {'mime_type': mime_type, 'data': file_data}}
-        ]
+        chat_session_key = 'chat_session'
+        chat_model_key = 'chat_model'
+        chat_session = user_chats[user_id].get(chat_session_key)
+        current_model = user_chats[user_id].get(chat_model_key)
 
-        
-        api_contents.append({'role': 'user', 'parts': new_user_parts})
-
-        if not history_before_this_turn:
+        if not chat_session or current_model != model_type:
             user = message.from_user
             first_name = user.first_name or "کاربر"
             tz = timezone(timedelta(hours=3, minutes=30))
@@ -421,22 +414,34 @@ async def gemini_process_file_stream(bot: TeleBot, message: Message, m: str, fil
                 f"تاریخ: {date}\nزمان: {timenow}\n\n"
                 f"{default_system_prompt}"
             )
-            api_contents.insert(0, {'role': 'user', 'parts': [{'text': system_prompt_text}]})
-            api_contents.insert(1, {'role': 'model', 'parts': [{'text': "باشه، متوجه شدم. آماده‌ام."}]})
-
-        tools = [search_tool] if model_type in PRO_MODELS else None
-        gen_config = {'tools': tools} if tools else {}
+            initial_history = [
+                {'role': 'user', 'parts': [{'text': system_prompt_text}]},
+                {'role': 'model', 'parts': [{'text': "باشه، متوجه شدم. آماده‌ام."}]}
+            ]
+            tools_config = [search_tool] if model_type in PRO_MODELS else None
+            chat_config = {}
+            if tools_config:
+                chat_config['tools'] = tools_config
+            
+            chat_session = client.aio.chats.create(
+                model=model_type,
+                history=initial_history,
+                config=chat_config
+            )
+            user_chats[user_id][chat_session_key] = chat_session
+            user_chats[user_id][chat_model_key] = model_type
 
         if not sent_message:
             sent_message = await bot.reply_to(message, before_generate_info)
-        else: 
+        else:
             await bot.edit_message_text("درحال پردازش فایل شما ... 🧐", chat_id=sent_message.chat.id, message_id=sent_message.message_id)
+
+        contents = [
+            prompt_to_use,
+            {'inline_data': {'mime_type': file_info['mime_type'], 'data': file_info['data']}}
+        ]
         
-        response_stream = await client.aio.models.generate_content_stream(
-            model=model_type,
-            contents=api_contents,
-            config=gen_config,
-        )
+        response_stream = await chat_session.send_message_stream(contents)
         
         full_response = ""
         last_update = time.time()
@@ -468,17 +473,6 @@ async def gemini_process_file_stream(bot: TeleBot, message: Message, m: str, fil
                     await bot.edit_message_text(part, chat_id=sent_message.chat.id, message_id=sent_message.message_id)
                 else:
                     await bot.send_message(message.chat.id, part)
-
-        if full_response:
-            new_history = list(history_before_this_turn)
-            if not history_before_this_turn:
-                new_history.extend(api_contents[:2]) 
-            user_prompt_for_history = f"[کاربر فایلی با این توضیح ارسال کرد: '{prompt_to_use}']"
-            new_history.append({'role': 'user', 'parts': [{'text': user_prompt_for_history}]})
-            new_history.append({'role': 'model', 'parts': [{'text': full_response}]})
-            if len(new_history) > 30:
-                new_history = new_history[-30:]
-            user_chats[user_id]["history"] = new_history
 
         user_chats[user_id]["stats"]["messages"] += 1
         asyncio.create_task(save_user_chats())
