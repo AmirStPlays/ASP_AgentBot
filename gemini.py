@@ -441,7 +441,7 @@ async def gemini_process_file_stream(bot: TeleBot, message: Message, m: str, fil
             {'inline_data': {'mime_type': file_info['mime_type'], 'data': file_info['data']}}
         ]
         
-        response_stream = await chat_session.send_message_stream(contents)
+        response_stream = await chat_session.send_message_stream(content=contents)
         
         full_response = ""
         last_update = time.time()
