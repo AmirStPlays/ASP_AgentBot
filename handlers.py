@@ -268,13 +268,20 @@ async def gemini_private_handler(message: Message, bot: TeleBot) -> None:
     if final_prompt is None and file_info is None:
         if status_message: await bot.delete_message(status_message.chat.id, status_message.message_id)
         return
+    
+    # اگر فایلی ضمیمه باشد، یک پرامپت پیش‌فرض به آن اختصاص داده می‌شود،
+    # بنابراین این شرط فقط پیام‌های متنی خالی را متوقف می‌کند.
     if not final_prompt.strip(): return
 
     user_id_str = str(message.from_user.id)
     model_to_use = model_1 if user_model_preference.get(user_id_str, True) else model_2
     
     if file_info:
-        await gemini.gemini_process_file_stream(bot, message, final_prompt, file_info, model_to_use, status_message)
+        # اصلاح: بر اساس نوع فایل (mime_type) بین پردازش عکس و فایل تمایز قائل شو
+        if 'image' in file_info['mime_type']:
+            await gemini.gemini_process_image_stream(bot, message, final_prompt, file_info['data'], model_to_use, status_message)
+        else:
+            await gemini.gemini_process_file_stream(bot, message, final_prompt, file_info, model_to_use, status_message)
     else:
         await gemini.gemini_stream(bot, message, final_prompt, model_to_use)
 
@@ -282,11 +289,7 @@ async def gemini_private_handler(message: Message, bot: TeleBot) -> None:
 async def gemini_group_text_handler(message: Message, bot: TeleBot) -> None:
     text = message.text.strip()
     if not text.startswith('.'): return
-    
-    # We modify message.text in-place for _build_prompt_with_reply_context to work correctly
     message.text = text[1:].strip()
-    
-    # If the text is empty after removing '.', and it's not a reply, it's an invalid command.
     if not message.text and not message.reply_to_message:
         await bot.reply_to(message, pm["group_prompt_needed"])
         return
@@ -301,38 +304,16 @@ async def gemini_group_text_handler(message: Message, bot: TeleBot) -> None:
     model_to_use = model_1 if user_model_preference.get(user_id_str, True) else model_2
     
     if file_info:
-        await gemini.gemini_process_file_stream(bot, message, final_prompt, file_info, model_to_use, status_message)
+        # اصلاح: بر اساس نوع فایل (mime_type) بین پردازش عکس و فایل تمایز قائل شو
+        if 'image' in file_info['mime_type']:
+            await gemini.gemini_process_image_stream(bot, message, final_prompt, file_info['data'], model_to_use, status_message)
+        else:
+            await gemini.gemini_process_file_stream(bot, message, final_prompt, file_info, model_to_use, status_message)
     else:
-        if not final_prompt: # Check again in case it was a reply with empty text
+        if not final_prompt: # در صورتی که ریپلای با متن خالی باشد دوباره چک کن
              await bot.reply_to(message, pm["group_prompt_needed"])
              return
         await gemini.gemini_stream(bot, message, final_prompt, model_to_use)
-@pre_command_checks
-async def gemini_photo_handler(message: Message, bot: TeleBot) -> None:
-    caption = (message.caption or "").strip()
-    is_group = message.chat.type != "private"
-    if is_group:
-        if not caption.startswith("."): return
-        prompt_to_use = caption[1:].strip() or default_image_prompt
-    else:
-        if caption.lower().startswith(("/edit ", "/img ")):
-            await bot.reply_to(message, escape(pm["photo_command_caption_info"]), parse_mode="MarkdownV2")
-            return
-        prompt_to_use = caption or default_image_prompt
-    if not prompt_to_use: return
-
-    try:
-        status_message = await bot.reply_to(message, pm["photo_proccessing_prompt"])
-        file_path = await bot.get_file(message.photo[-1].file_id)
-        photo_file = await bot.download_file(file_path.file_path)
-    except Exception as e:
-        traceback.print_exc()
-        await bot.reply_to(message, f"{error_info}\nDetails: {str(e)}")
-        return
-
-    user_id_str = str(message.from_user.id)
-    model_to_use = model_1 if user_model_preference.get(user_id_str, True) else model_2
-    await gemini.gemini_process_image_stream(bot, message, prompt_to_use, photo_file, model_to_use, status_message)
 
 @pre_command_checks
 async def gemini_voice_handler(message: Message, bot: TeleBot) -> None:
