@@ -435,6 +435,33 @@ async def handle_callback_query(call: telebot_types.CallbackQuery, bot: TeleBot)
             else:
                 await bot.edit_message_text(error_info, call.message.chat.id, call.message.message_id, reply_markup=None)
 
+@pre_command_checks
+async def gemini_photo_handler(message: Message, bot: TeleBot) -> None:
+    caption = (message.caption or "").strip()
+    is_group = message.chat.type != "private"
+    if is_group:
+        if not caption.startswith("."): return
+        prompt_to_use = caption[1:].strip() or default_image_prompt
+    else:
+        if caption.lower().startswith(("/edit ", "/img ")):
+            await bot.reply_to(message, escape(pm["photo_command_caption_info"]), parse_mode="MarkdownV2")
+            return
+        prompt_to_use = caption or default_image_prompt
+    if not prompt_to_use: return
+
+    try:
+        status_message = await bot.reply_to(message, pm["photo_proccessing_prompt"])
+        file_path = await bot.get_file(message.photo[-1].file_id)
+        photo_file = await bot.download_file(file_path.file_path)
+    except Exception as e:
+        traceback.print_exc()
+        await bot.reply_to(message, f"{error_info}\nDetails: {str(e)}")
+        return
+
+    user_id_str = str(message.from_user.id)
+    model_to_use = model_1 if user_model_preference.get(user_id_str, True) else model_2
+    await gemini.gemini_process_image_stream(bot, message, prompt_to_use, photo_file, model_to_use, status_message)
+    
 def clear_updates(tg_token):
     url = f"https://api.telegram.org/bot{tg_token}/getUpdates"
     try:
