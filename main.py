@@ -44,6 +44,7 @@ async def run_bot():
         telebot.types.BotCommand("switch", "تغییر مدل پیش‌فرض (فقط در pv)"),
         telebot.types.BotCommand("help", "راهنمای استفاده از ربات"),
         telebot.types.BotCommand("info", "نمایش آمار استفاده کاربر"),
+        telebot.types.BotCommand("report", "نمایش آمار استفاده کاربران(فقط برای ادمین)"),
     ])
 
     bot.register_message_handler(handlers.start, commands=['start'], pass_bot=True)
@@ -53,7 +54,7 @@ async def run_bot():
     bot.register_message_handler(handlers.clear, commands=['clear'], pass_bot=True)
     bot.register_message_handler(handlers.switch, commands=['switch'], pass_bot=True)
     bot.register_message_handler(handlers.show_help, commands=['help'], pass_bot=True)
-    
+    bot.register_message_handler(handlers.report_handler, commands=['report'], pass_bot=True)
     bot.register_message_handler(handlers.gemini_photo_handler, content_types=["photo"], pass_bot=True)
     bot.register_message_handler(handlers.gemini_voice_handler, content_types=["voice"], pass_bot=True)
     bot.register_message_handler(handlers.gemini_document_handler, content_types=['document'], pass_bot=True)
