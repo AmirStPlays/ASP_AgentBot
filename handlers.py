@@ -196,18 +196,32 @@ async def show_help(message: Message, bot: TeleBot):
 @pre_command_checks
 async def show_info(message: Message, bot: TeleBot):
     user_id_str = str(message.from_user.id)
-    user_data = gemini.user_chats.get(user_id_str)
+    user_data = gemini.user_chats.get(user_id_str, {})
+    stats = user_data.get("stats", {})
     
-    if user_data and "stats" in user_data:
-        stats = user_data["stats"]
-        messages = stats.get("messages", 0)
-        generated_images = stats.get("generated_images", 0)
-        edited_images = stats.get("edited_images", 0)
-    else:
-        messages, generated_images, edited_images = 0, 0, 0
-
-    info_text_raw = (f"📊 *آمار استفاده شما* 📊\n\n💬 *کل پیام‌ها:* {messages}\n🎨 *تصاویر ساخته شده امروز:* {generated_images}\n🖼️ *تصاویر ویرایش شده امروز:* {edited_images}\n\n__آمار تصویر روزانه ریست می‌شود.__")
-    await bot.reply_to(message, escape(info_text_raw), parse_mode="MarkdownV2")
+    # استخراج اطلاعات کاربر
+    first_name = message.from_user.first_name or "نامشخص"
+    username = f"@{message.from_user.username}" if message.from_user.username else "ندارد"
+    user_id = message.from_user.id
+    generated_images = stats.get("generated_images", 0)
+    messages = stats.get("messages", 0)
+    voices = stats.get("voices", 0)
+    files = stats.get("files", 0)
+    
+    # فرمت‌دهی اطلاعات
+    info_text = (
+        "اطلاعات کاربر:\n"
+        f"👤 نام: *{escape(first_name)}*\n"
+        f"🌐 نام کاربری: *{escape(username)}*\n"
+        f"🆔 آیدی عددی: {user_id}\n"
+        f"🖼️ تعداد عکس‌های ساخته شده: {generated_images}\n"
+        f"💬 تعداد پیام‌ها: {messages}\n"
+        f"🎤 تعداد ویس‌های پردازش‌شده: {voices}\n"
+        f"📁 تعداد فایل‌های پردازش‌شده: {files}"
+    )
+    
+    # ارسال پیام
+    await bot.reply_to(message, info_text, parse_mode="MarkdownV2")
 
 
 async def start(message: Message, bot: TeleBot) -> None:
@@ -228,25 +242,54 @@ async def start(message: Message, bot: TeleBot) -> None:
         traceback.print_exc()
         await bot.reply_to(message, error_info)
 
-
 @pre_command_checks
 async def clear(message: Message, bot: TeleBot) -> None:
     user_id_str = str(message.from_user.id)
     history_cleared_flag = False
+    
     if user_id_str in gemini.user_chats:
         gemini.user_chats[user_id_str]["history"] = []
+        gemini.user_chats[user_id_str]["chat_session"] = None  # حذف جلسه چت
         if "stats" in gemini.user_chats[user_id_str]:
             gemini.user_chats[user_id_str]["stats"]["messages"] = 0
+            gemini.user_chats[user_id_str]["stats"]["files"] = 0
+            gemini.user_chats[user_id_str]["stats"]["voices"] = 0
         history_cleared_flag = True
-
-    if user_id_str in user_model_preference:
-        del user_model_preference[user_id_str]
     
     if history_cleared_flag:
         asyncio.create_task(gemini.save_user_chats())
-        await bot.reply_to(message, pm["history_cleared"])
+        await bot.reply_to(message, "تاریخچه و آمار شما پاک شد.")
     else:
         await bot.reply_to(message, "تاریخچه‌ای برای پاک کردن وجود نداشت.")
+
+async def report_handler(message: Message, bot: TeleBot):
+    if message.from_user.id != 6063635684:
+        await bot.reply_to(message, "این دستور فقط برای ادمین قابل دسترسی است.")
+        return
+
+    if not gemini.active_users_today:
+        await bot.reply_to(message, "هیچ کاربر فعالی امروز وجود ندارد.")
+        return
+
+    for user_id in gemini.active_users_today:
+        user_data = gemini.user_chats.get(user_id, {})
+        stats = user_data.get("stats", {})
+        report = (
+            f"گزارش فعلی برای کاربر {user_id}:\n"
+            f"```\n"
+            f"تعداد پیام‌های ارسالی: {stats.get('messages', 0)}\n"
+            f"تعداد عکس‌های ساخته شده: {stats.get('generated_images', 0)}\n"
+            f"تعداد عکس‌های ادیت شده: {stats.get('edited_images', 0)}\n"
+            f"تعداد ویس‌های پردازش‌شده: {stats.get('voices', 0)}\n"
+            f"تعداد فایل‌های پردازش‌شده: {stats.get('files', 0)}\n"
+            f"```"
+        )
+        try:
+            await bot.send_message(message.chat.id, report, parse_mode="MarkdownV2")
+            await asyncio.sleep(1)  # جلوگیری از محدودیت نرخ تلگرام
+        except Exception as e:
+            print(f"Error sending report: {e}")
+            await bot.send_message(message.chat.id, f"خطا در ارسال گزارش برای کاربر {user_id}: {str(e)}")
 
 @pre_command_checks
 async def switch(message: Message, bot: TeleBot) -> None:
