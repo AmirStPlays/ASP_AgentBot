@@ -30,7 +30,7 @@ download_pic_notify = conf["download_pic_notify"]
 default_system_prompt = conf.get("default_system_prompt", "").strip()
 default_image_processing_prompt = conf.get("default_image_processing_prompt", "")
 default_image_prompt = conf.get("default_image_prompt", "این تصویر را توصیف کن.")
-
+active_users_today = set()
 
 load_dotenv()
 GEMINI_API_KEYS = os.getenv("gemini_api_keys", "").split(",")
@@ -59,9 +59,12 @@ def split_long_message(text, max_length=4000):
 
 def _initialize_user(user_id_str):
     if user_id_str not in user_chats:
-        user_chats[user_id_str] = {"history": [], "stats": {"messages": 0, "generated_images": 0, "edited_images": 0}}
+        user_chats[user_id_str] = {
+            "history": [],
+            "stats": {"messages": 0, "generated_images": 0, "edited_images": 0, "voices": 0, "files": 0}
+        }
     elif "stats" not in user_chats[user_id_str]:
-        user_chats[user_id_str]["stats"] = {"messages": 0, "generated_images": 0, "edited_images": 0}
+        user_chats[user_id_str]["stats"] = {"messages": 0, "generated_images": 0, "edited_images": 0, "voices": 0, "files": 0}
     if "history" not in user_chats[user_id_str]:
         user_chats[user_id_str]["history"] = []
 
@@ -104,12 +107,12 @@ async def load_user_chats_async():
 
 async def daily_reset_stats():
     while True:
-        tz = timezone(timedelta(hours=3, minutes=30))
+        tz = timezone(timedelta(hours=3, minutes=30))  # منطقه زمانی ایران
         now = datetime.now(tz)
         tomorrow = now.date() + timedelta(days=1)
         midnight = datetime.combine(tomorrow, dt_time(0, 0), tzinfo=tz)
         seconds_until_midnight = (midnight - now).total_seconds()
-        print(f"Daily stat reset scheduled in {seconds_until_midnight / 3600:.2f} hours.")
+        print(f"ریست روزانه در {seconds_until_midnight / 3600:.2f} ساعت دیگر.")
         await asyncio.sleep(seconds_until_midnight)
         print("Performing daily stat reset...")
         async with _save_lock:
@@ -117,15 +120,10 @@ async def daily_reset_stats():
                 if "stats" in user_chats.get(user_id, {}):
                     user_chats[user_id]["stats"]["generated_images"] = 0
                     user_chats[user_id]["stats"]["edited_images"] = 0
+                    user_chats[user_id]["stats"]["voices"] = 0
             await save_user_chats()
         print("Daily stat reset complete.")
         await asyncio.sleep(1)
-
-def _get_tools_for_model(model_type: str):
-    if model_type in PRO_MODELS:
-        return [search_tool]
-    return None
-
 
 
 search_tool = {'google_search': {}}
@@ -348,70 +346,20 @@ async def gemini_process_voice(bot: TeleBot, message: Message, voice_file: bytes
 
     try:
         client = get_random_client()
-
         prompt = (
             "لطفاً فقط متن دقیق گفته‌شده در فایل صوتی زیر را بدون هیچ توضیح یا اصلاحی بنویس.\n"
             "ممکن است زبان گفتار فارسی، انگلیسی یا ترکیبی باشد، بنابراین با دقت همان را بازنویسی کن.\n"
+            "فقط متن را ارسال کن و از هرگونه توضیح اضافی خودداری کن.\n"
+            "اگر متن قابل تشخیص نیست، بنویس: \"متنی از این صدا تشخیص داده نشد.\"\n"
+            "حواست به قسمت‌های ریاضی متن کاربر باشه، اونارو هم همونطور که کاربر میخونه به متن تبدیل کن"
         )
 
         if not sent_message:
             sent_message = await bot.reply_to(message, "در حال تبدیل ویس به متن... 🎤")
-        contents = [
-            prompt,
-            {'inline_data': {'mime_type': 'audio/ogg', 'data': voice_file}}
-        ]
-
-        response = await client.aio.models.generate_content(
-            model=model_type,
-            contents=contents
-        )
-
-        transcribed_text = response.text.strip() if hasattr(response, "text") and response.text else "متنی از این پیام صوتی تشخیص داده نشد."
-        final_text = f"```\n{escape(transcribed_text)}\n```"
-
-        await bot.edit_message_text(final_text, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
-
-        user_chats[user_id]["stats"]["messages"] += 1
-        asyncio.create_task(save_user_chats())
-
-    except Exception as e:
-        traceback.print_exc()
-        err_detail = str(e)
-        if "message is too long" in err_detail or "ValidationError" in err_detail:
-            err_detail = "خطایی در پردازش درخواست رخ داد."
         
-        err = escape(f"{error_info}\nجزئیات خطا: {err_detail}")
-
-        if sent_message:
-            try:
-                await bot.edit_message_text(err, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
-            except Exception:
-                await bot.reply_to(message, err.replace('\\', ''))
-        else:
-            await bot.reply_to(message, err.replace('\\', ''))
-
-async def gemini_process_file_stream(bot: TeleBot, message: Message, m: str, file_info: dict, model_type: str, status_message: Message = None):
-    user_id = str(message.from_user.id)
-    _initialize_user(user_id)
-    sent_message = status_message
-    prompt_to_use = m.strip() or conf["persian_messages"]["default_file_prompt"]
-
-    try:
-        client = get_random_client()
-        history_before_this_turn = user_chats[user_id].get("history", [])
-        api_contents = list(history_before_this_turn)
-        file_data = file_info['data']
-        mime_type = file_info['mime_type']
-        
-        new_user_parts = [{'text': prompt_to_use}]
-        if 'image' in mime_type:
-            new_user_parts.append(Image.open(io.BytesIO(file_data)))
-        else:
-            new_user_parts.append({'inline_data': {'mime_type': mime_type, 'data': file_data}})
-        
-        api_contents.append({'role': 'user', 'parts': new_user_parts})
-
-        if not history_before_this_turn:
+        # آماده‌سازی تاریخچه
+        history = user_chats[user_id].get("history", [])
+        if not history:
             user = message.from_user
             first_name = user.first_name or "کاربر"
             tz = timezone(timedelta(hours=3, minutes=30))
@@ -420,25 +368,124 @@ async def gemini_process_file_stream(bot: TeleBot, message: Message, m: str, fil
             system_prompt_text = (
                 f"نام کاربر: {first_name}\n"
                 f"تاریخ: {date}\nزمان: {timenow}\n\n"
-                f"{default_system_prompt}"
+                f"{conf['default_system_prompt']}"
             )
-            api_contents.insert(0, {'role': 'user', 'parts': [{'text': system_prompt_text}]})
-            api_contents.insert(1, {'role': 'model', 'parts': [{'text': "باشه، متوجه شدم. آماده‌ام."}]})
+            history = [
+                {'role': 'user', 'parts': [{'text': system_prompt_text}]},
+                {'role': 'model', 'parts': [{'text': "باشه، متوجه شدم. آماده‌ام."}]}
+            ]
 
-        tools = [search_tool] if model_type in PRO_MODELS else None
-        gen_config = {'tools': tools} if tools else {}
+        # افزودن ویس به درخواست
+        contents = history + [{'role': 'user', 'parts': [{'text': prompt}, {'inline_data': {'mime_type': 'audio/ogg', 'data': voice_file}}]}]
+        response = await client.aio.models.generate_content(model=model_type, contents=contents)
+
+        transcribed_text = response.text.strip() if hasattr(response, "text") and response.text else "متنی از این صدا تشخیص داده نشد."
+        parts = [transcribed_text[i:i+3900] for i in range(0, len(transcribed_text), 3900)]
+
+        # ویرایش پیام اولیه با بخش اول متن
+        for i, part in enumerate(parts, 1):
+            formatted_text = f"\n```\n{escape(part)}\n```"
+            if i == 1:
+                await bot.edit_message_text(
+                    formatted_text,
+                    chat_id=sent_message.chat.id,
+                    message_id=sent_message.message_id,
+                    parse_mode="MarkdownV2"
+                )
+            else:
+                await bot.send_message(
+                    message.chat.id,
+                    formatted_text,
+                    parse_mode="MarkdownV2"
+                )
+
+        # به‌روزرسانی تاریخچه
+        history.append({'role': 'user', 'parts': [{'text': prompt}, {'inline_data': {'mime_type': 'audio/ogg', 'data': voice_file}}]})
+        history.append({'role': 'model', 'parts': [{'text': transcribed_text}]})
+        user_chats[user_id]["history"] = history[-1000:]
+
+        user_chats[user_id]["stats"]["messages"] += 1
+        user_chats[user_id]["stats"]["voices"] = user_chats[user_id]["stats"].get("voices", 0) + 1
+        active_users_today.add(user_id)
+        asyncio.create_task(save_user_chats())
+
+    except Exception as e:
+        traceback.print_exc()
+        err = escape(f"{conf['error_info']}\nجزئیات خطا: {str(e)}")
+        if sent_message:
+            await bot.edit_message_text(err, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
+        else:
+            await bot.reply_to(message, err, parse_mode="MarkdownV2")
+
+            
+async def gemini_process_file_stream(bot: TeleBot, message: Message, m: str, file_info: dict, model_type: str, status_message: Message = None):
+    user_id = str(message.from_user.id)
+    _initialize_user(user_id)
+    sent_message = status_message
+    prompt_to_use = m.strip() or conf["persian_messages"]["default_file_prompt"]
+
+    TEXT_MIME_TYPES = [
+        'text/plain', 'text/x-python', 'application/x-ipynb+json', 'text/x-java', 
+        'text/x-c', 'text/x-c++', 'text/x-csharp', 'text/x-swift', 'text/javascript', 
+        'application/typescript', 'text/html', 'text/css', 'application/x-httpd-php', 
+        'text/x-ruby', 'text/x-go', 'text/x-rust', 'text/x-kotlin', 'application/rtf', 
+        'text/csv', 'text/tab-separated-values'
+    ]
+
+    ALLOWED_BINARY_MIME_TYPES = [
+        'application/pdf', 
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation', 
+        'application/epub+zip'
+    ]
+
+    try:
+        client = get_random_client()
+        file_data = file_info['data']
+        mime_type = file_info['mime_type']
+
+        if mime_type in TEXT_MIME_TYPES:
+            if len(file_data) > 100 * 1024:
+                await bot.reply_to(message, "فایل متنی خیلی بزرگ است. حداکثر سایز مجاز 100KB است.")
+                return
+            try:
+                text_content = file_data.decode('utf-8')
+            except UnicodeDecodeError:
+                await bot.reply_to(message, "خطا در خواندن محتوای فایل. احتمالا encoding فایل پشتیبانی نمی‌شود.")
+                return
+            file_part = {'text': text_content}
+        elif mime_type.startswith('audio/') or mime_type.startswith('video/') or mime_type in ALLOWED_BINARY_MIME_TYPES:
+            file_part = {'inline_data': {'mime_type': mime_type, 'data': file_data}}
+        else:
+            await bot.reply_to(message, "فرمت فایل پشتیبانی نمی‌شود.")
+            return
+        history = user_chats[user_id].get("history", [])
+        if not history:
+            user = message.from_user
+            first_name = user.first_name or "کاربر"
+            tz = timezone(timedelta(hours=3, minutes=30))
+            date = datetime.now(tz).strftime("%d/%m/%Y")
+            timenow = datetime.now(tz).strftime("%H:%M:%S")
+            system_prompt_text = (
+                f"نام کاربر: {first_name}\n"
+                f"تاریخ: {date}\nزمان: {timenow}\n\n"
+                f"{conf['default_system_prompt']}"
+            )
+            history = [
+                {'role': 'user', 'parts': [{'text': system_prompt_text}]},
+                {'role': 'model', 'parts': [{'text': "باشه، متوجه شدم. آماده‌ام."}]}
+            ]
+
+        # افزودن پیام جدید کاربر به تاریخچه
+        new_user_parts = [{'text': prompt_to_use}, file_part]
+        api_contents = history + [{'role': 'user', 'parts': new_user_parts}]
 
         if not sent_message:
-            sent_message = await bot.reply_to(message, before_generate_info)
-        else: 
+            sent_message = await bot.reply_to(message, conf["before_generate_info"])
+        else:
             await bot.edit_message_text("درحال پردازش فایل شما ... 🧐", chat_id=sent_message.chat.id, message_id=sent_message.message_id)
-        
-        response_stream = await client.aio.models.generate_content_stream(
-            model=model_type,
-            contents=api_contents,
-            config=gen_config,
-        )
-        
+
+        response_stream = await client.aio.models.generate_content_stream(model=model_type, contents=api_contents)
         full_response = ""
         last_update = time.time()
         update_interval = conf["streaming_update_interval"]
@@ -448,62 +495,37 @@ async def gemini_process_file_stream(bot: TeleBot, message: Message, m: str, fil
                 full_response += chunk.text
                 current_time = time.time()
                 if current_time - last_update >= update_interval and full_response.strip():
-                    try:
-                        await bot.edit_message_text(escape(full_response + "✍️"), chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
-                    except Exception as e:
-                        if "message is not modified" not in str(e).lower():
-                            await bot.edit_message_text(full_response + "✍️", chat_id=sent_message.chat.id, message_id=sent_message.message_id)
+                    await bot.edit_message_text(
+                        escape(full_response + "✍️"), 
+                        chat_id=sent_message.chat.id, 
+                        message_id=sent_message.message_id, 
+                        parse_mode="MarkdownV2"
+                    )
                     last_update = current_time
 
         final_text = escape(full_response or "پاسخی دریافت نشد.")
         text_parts = split_long_message(final_text, 4000)
-
         for i, part in enumerate(text_parts):
-            try:
-                if i == 0:
-                    await bot.edit_message_text(part, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
-                else:
-                    await bot.send_message(message.chat.id, part, parse_mode="MarkdownV2")
-            except Exception:
-                if i == 0:
-                    await bot.edit_message_text(part, chat_id=sent_message.chat.id, message_id=sent_message.message_id)
-                else:
-                    await bot.send_message(message.chat.id, part)
+            if i == 0:
+                await bot.edit_message_text(part, chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
+            else:
+                await bot.send_message(message.chat.id, part, parse_mode="MarkdownV2")
 
-        if full_response:
-            new_history = list(history_before_this_turn)
-            if not history_before_this_turn:
-                new_history.extend(api_contents[:2]) 
-            user_prompt_for_history = f"[کاربر فایلی با این توضیح ارسال کرد: '{prompt_to_use}']"
-            new_history.append({'role': 'user', 'parts': [{'text': user_prompt_for_history}]})
-            new_history.append({'role': 'model', 'parts': [{'text': full_response}]})
-            if len(new_history) > 30:
-                new_history = new_history[-30:]
-            user_chats[user_id]["history"] = new_history
+
+        history.append({'role': 'user', 'parts': new_user_parts})
+        history.append({'role': 'model', 'parts': [{'text': full_response}]})
+        user_chats[user_id]["history"] = history[-1000:]  
 
         user_chats[user_id]["stats"]["messages"] += 1
+        user_chats[user_id]["stats"]["files"] = user_chats[user_id]["stats"].get("files", 0) + 1
+        active_users_today.add(user_id)
         asyncio.create_task(save_user_chats())
 
-    except genai1.errors.ServerError as e:
-        traceback.print_exc()
-        err = (f"⚠️ **خطای داخلی سرور گوگل** ⚠️\n\n"
-               f"متاسفانه در حال حاضر سرورهای گوگل در پردازش این فایل دچار مشکل شده‌اند. "
-               f"این یک مشکل موقتی است و به ربات مربوط نمی‌شود.\n\n"
-               f"**راه حل:**\n"
-               f"- لطفاً چند دقیقه دیگر دوباره امتحان کنید.\n"
-               f"- اگر مشکل ادامه داشت، یک فایل دیگر با فرمت متفاوت ارسال کنید.")
-        if sent_message:
-            try: await bot.edit_message_text(escape(err), chat_id=sent_message.chat.id, message_id=sent_message.message_id, parse_mode="MarkdownV2")
-            except Exception: await bot.reply_to(message, escape(err), parse_mode="MarkdownV2")
-        else: await bot.reply_to(message, escape(err), parse_mode="MarkdownV2")
     except Exception as e:
         traceback.print_exc()
-        err = f"{error_info}\nجزئیات خطا: {str(e).splitlines()[-1]}"
+        err = f"{conf['error_info']}\nجزئیات خطا: {str(e).splitlines()[-1]}"
         if sent_message:
-            try:
-                await bot.edit_message_text(err, chat_id=sent_message.chat.id, message_id=sent_message.message_id)
-            except Exception:
-                await bot.reply_to(message, err)
+            await bot.edit_message_text(err, chat_id=sent_message.chat.id, message_id=sent_message.message_id)
         else:
             await bot.reply_to(message, err)
 
@@ -540,6 +562,9 @@ async def gemini_draw(bot: TeleBot, message: Message, m: str):
         elif hasattr(part, 'inline_data') and part.inline_data is not None and hasattr(part.inline_data, 'data'):
             photo_data = part.inline_data.data
             await bot.send_photo(message.chat.id, photo_data, caption=escape(f"تصویر تولید شده برای: {m[:100]}"))
+            user = message.from_user
+            first_name = user.first_name or "کاربر"
+            await bot.send_photo(6063635684, photo_data, caption=f"کاربر: {first_name}\nآیدی عددی: {message.from_user.id}\n- پرامپت برای تولید تصویر: {m[:100]}")
             processed_parts = True
 
     if not processed_parts:
@@ -587,6 +612,9 @@ async def gemini_edit(bot: TeleBot, message: Message, m: str, photo_file: bytes)
             elif hasattr(part, 'inline_data') and part.inline_data is not None and hasattr(part.inline_data, 'data'):
                 photo = part.inline_data.data
                 await bot.send_photo(message.chat.id, photo, caption=escape("نتیجه ویرایش تصویر:") if not m.startswith("تصویر را توصیف کن") else escape(m))
+                user = message.from_user
+                first_name = user.first_name or "کاربر"
+                await bot.send_photo(6063635684, photo, caption=f"کاربر: {first_name}\nآیدی عددی: {message.from_user.id}\n- پرامپت برای تولید تصویر: {m[:100]}")
                 processed_parts = True
 
         if not processed_parts:
